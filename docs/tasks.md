@@ -12,10 +12,11 @@ weight: 1
   - [Defining `Steps`](#defining-steps)
     - [Reserved directories](#reserved-directories)
     - [Running scripts within `Steps`](#running-scripts-within-steps)
+    - [Specifying a timeout](#specifying-a-timeout)
   - [Specifying `Parameters`](#specifying-parameters)
   - [Specifying `Resources`](#specifying-resources)
   - [Specifying `Workspaces`](#specifying-workspaces)
-  - [Storing execution results](#storing-execution-results)
+  - [Emitting `results`](#emitting-results)
   - [Specifying `Volumes`](#specifying-volumes)
   - [Specifying a `Step` template](#specifying-a-step-template)
   - [Specifying `Sidecars`](#specifying-sidecars)
@@ -48,7 +49,7 @@ A `Task` declaration includes the following elements:
 - [Resources](#specifying-resources)
 - [Steps](#defining-steps)
 - [Workspaces](#specifying-workspaces)
-- [Results](#storing-execution-results)
+- [Results](#emitting-results)
 
 ## Configuring a `Task`
 
@@ -71,10 +72,10 @@ A `Task` definition supports the following fields:
     - [`inputs`](#specifying-resources) - Specifies the resources ingested by the `Task`.
     - [`outputs`](#specifying-resources) - Specifies the resources produced by the `Task`.
   - [`workspaces`](#specifying-workspaces) - Specifies paths to volumes required by the `Task`.
-  - [`results`](#storing-execution-results) - Specifies the file to which the `Tasks` writes its execution results.
-  - [`volumes`](#specifying-volumes) - Specifies one or more volumes that will be available available to the `Steps` in the `Task`.
+  - [`results`](#emitting-results) - Specifies the names under which `Tasks` write execution results.
+  - [`volumes`](#specifying-volumes) - Specifies one or more volumes that will be available to the `Steps` in the `Task`.
   - [`stepTemplate`](#specifying-a-step-template) - Specifies a `Container` step definition to use as the basis for all `Steps` in the `Task`.
-  - [`sidecars`](#specifying-sidecars) - Specifies `Sidecar` containers to run alongside the `Steps` in the `Task.
+  - [`sidecars`](#specifying-sidecars) - Specifies `Sidecar` containers to run alongside the `Steps` in the `Task`.
 
 [kubernetes-overview]:
   https://kubernetes.io/docs/concepts/overview/working-with-objects/kubernetes-objects/#required-fields
@@ -169,7 +170,7 @@ There are several directories that all `Tasks` run by Tekton will treat as speci
   are mounted. Paths to these are available to `Task` authors via [variable substitution](variables.md)
 * `/tekton` - This directory is used for Tekton specific functionality:
     * `/tekton/results` is where [results](#results) are written to.
-      The path is available to `Task` authors via [`$(results.name.path)`](variables.md))
+      The path is available to `Task` authors via [`$(results.name.path)`](variables.md)
     * There are other subfolders which are [implementation details of Tekton](developers/README.md#reserved-directories)
       and **users should not rely on their specific behavior as it may change in the future**
 
@@ -241,20 +242,41 @@ steps:
     #!/usr/bin/env bash
     /bin/my-binary
 ```
+#### Specifying a timeout
 
+A `Step` can specify a `timeout` field.
+If the `Step` execution time exceeds the specified timeout, the `Step` kills
+its running process and any subsequent `Steps` in the `TaskRun` will not be
+executed. The `TaskRun` is placed into a `Failed` condition.  An accompanying log
+describing which `Step` timed out is written as the `Failed` condition's message.
+
+The timeout specification follows the duration format as specified in the [Go time package](https://golang.org/pkg/time/#ParseDuration) (e.g. 1s or 1ms).
+
+The example `Step` below is supposed to sleep for 60 seconds but will be canceled by the specified 5 second timeout.
+```yaml
+steps:
+  - name: sleep-then-timeout
+    image: ubuntu
+    script: | 
+      #!/usr/bin/env bash
+      echo "I am supposed to sleep for 60 seconds!"
+      sleep 60
+    timeout: 5s
+``` 
 ### Specifying `Parameters`
 
 You can specify parameters, such as compilation flags or artifact names, that you want to supply to the `Task` at execution time.
  `Parameters` are passed to the `Task` from its corresponding `TaskRun`.
 
 Parameter names:
+
 - Must only contain alphanumeric characters, hyphens (`-`), and underscores (`_`).
 - Must begin with a letter or an underscore (`_`).
 
 For example, `fooIs-Bar_` is a valid parameter name, but `barIsBa$` or `0banana` are not.
 
 Each declared parameter has a `type` field, which can be set to either `array` or `string`. `array` is useful in cases where the number
-of compiliation flags being supplied to a task varies throughout the `Task's` execution. If not specified, the `type` field defaults to
+of compilation flags being supplied to a task varies throughout the `Task's` execution. If not specified, the `type` field defaults to
 `string`. When the actual parameter value is supplied, its parsed type is validated against the `type` field.
 
 The following example illustrates the use of `Parameters` in a `Task`. The `Task` declares two input parameters named `flags`
@@ -363,7 +385,8 @@ steps:
 ### Specifying `Workspaces`
 
 [`Workspaces`](workspaces.md#using-workspaces-in-tasks) allow you to specify
-one or more volumes that your `Task` requires during execution. For example:
+one or more volumes that your `Task` requires during execution. It is recommended that `Tasks` uses **at most**
+one writeable `Workspace`. For example:
 
 ```yaml
 spec:
@@ -383,11 +406,26 @@ spec:
 For more information, see [Using `Workspaces` in `Tasks`](workspaces.md#using-workspaces-in-tasks)
 and the [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml) example YAML file.
 
-### Storing execution results
+### Emitting results
 
-Use the `results` field to specify one or more files in which the `Task` stores its execution results. These files are
-stored in the `/tekton/results` directory. This directory is created automatically at execution time if at least one file
-is specified in the `results` field. To specify a file, provide its `name` and `description`.
+A Task is able to emit string results that can be viewed by users and passed to other Tasks in a Pipeline. These
+results have a wide variety of potential uses. To highlight just a few examples from the Tekton Catalog: the
+[`git-clone` Task](https://github.com/tektoncd/catalog/blob/master/task/git-clone/0.1/git-clone.yaml) emits a
+cloned commit SHA as a result, the [`generate-build-id` Task](https://github.com/tektoncd/catalog/blob/master/task/generate-build-id/0.1/generate-build-id.yaml)
+emits a randomized ID as a result, and the [`kaniko` Task](https://github.com/tektoncd/catalog/tree/master/task/kaniko/0.1)
+emits a container image digest as a result. In each case these results convey information for users to see when
+looking at their TaskRuns and can also be used in a Pipeline to pass data along from one Task to the next.
+
+To define a `Task's` results, use the `results` field. Each `results` entry in the `Task's` YAML corresponds to a
+file that the `Task` should stores the result in. These files should be created by a `Task` in the
+`/tekton/results` directory. The directory itself is created automatically if the `Task` has
+a `results` field but it's the responsibility of the `Task` to generate its contents.
+
+It's important to note that Tekton does not perform any processing on the contents of results; they are emitted
+verbatim from your Task including any leading or trailing whitespace characters. Make sure to write only the
+precise string you want returned from your `Task` into the `/tekton/results/` files that your `Task` creates.
+You can use [`$(results.name.path)`](https://github.com/tektoncd/pipeline/blob/master/docs/variables.md#variables-available-in-a-task)
+to avoid having to hardcode this path.
 
 In the example below, the `Task` specifies two files in the `results` field:
 `current-date-unix-timestamp` and `current-date-human-readable`.
@@ -411,24 +449,27 @@ spec:
       image: bash:latest
       script: |
         #!/usr/bin/env bash
-        date +%s | tee /tekton/results/current-date-unix-timestamp
-    - name: print-date-humman-readable
+        date +%s | tee $(results.current-date-unix-timestamp.path)
+    - name: print-date-human-readable
       image: bash:latest
       script: |
         #!/usr/bin/env bash
-        date | tee /tekton/results/current-date-human-readable
+        date | tee $(results.current-date-human-readable.path)
 ```
 
-**Note:** The maximum size of a `Task's` results is limited by the container termination log feature of Kubernetes,
+The stored results can be used [at the `Task` level](./pipelines.md#configuring-execution-results-at-the-task-level)
+or [at the `Pipeline` level](./pipelines.md#configuring-execution-results-at-the-pipeline-level).
+
+**Note:** The maximum size of a `Task's` results is limited by the container termination message feature of Kubernetes,
 as results are passed back to the controller via this mechanism. At present, the limit is
-["2048 bytes or 80 lines, whichever is smaller."](https://kubernetes.io/docs/tasks/debug-application-cluster/determine-reason-pod-failure/#customizing-the-termination-message).
-Results are written to the termination log encoded as JSON objects and Tekton uses those objects
+["4096 bytes"](https://github.com/kubernetes/kubernetes/blob/96e13de777a9eb57f87889072b68ac40467209ac/pkg/kubelet/container/runtime.go#L632).
+Results are written to the termination message encoded as JSON objects and Tekton uses those objects
 to pass additional information to the controller. As such, `Task` results are best suited for holding
-small amounts of data, such as commit SHAs, branch names, ephemeral space names, and so on.
+small amounts of data, such as commit SHAs, branch names, ephemeral namespaces, and so on.
 
 If your `Task` writes a large number of small results, you can work around this limitation
-by writing each result from a separate `Step` so that each `Step` has its own termination log.
-However, for results larger than a kilobyte, use a [`Workspace`](#specifying-workspaces) to
+by writing each result from a separate `Step` so that each `Step` has its own termination message.
+About size limitation, there is validation for it, will raise exception: `Termination message is above max allowed size 4096, caused by large task result`. Since Tekton also uses the termination message for some internal information, so the real available size will less than 4096 bytes. For results larger than a kilobyte, use a [`Workspace`](#specifying-workspaces) to
 shuttle data between `Tasks` within a `Pipeline`.
 
 ### Specifying `Volumes`
@@ -480,7 +521,7 @@ The `sidecars` field specifies a list of [`Containers`](https://kubernetes.io/do
 to run alongside the `Steps` in your `Task`. You can use `Sidecars` to provide auxiliary functionality, such as
 [Docker in Docker](https://hub.docker.com/_/docker) or running a mock API server that your app can hit during testing.
 `Sidecars` spin up before your `Task` executes and are deleted after the `Task` execution completes.
-For further information, see [`Sidecars` in `TaskRuns`](taskruns.md#sidecars).
+For further information, see [`Sidecars` in `TaskRuns`](taskruns.md#specifying-sidecars).
 
 In the example below, a `Step` uses a Docker-in-Docker `Sidecar` to build a Docker image:
 
@@ -521,10 +562,10 @@ Sidecars, just like `Steps`, can also run scripts:
 
 ```yaml
 sidecars:
-  image: busybox
-  name: hello-sidecar
-  script: |
-    echo 'Hello from sidecar!'
+  - image: busybox
+    name: hello-sidecar
+    script: |
+      echo 'Hello from sidecar!'
 ```
 **Note:** Tekton's current `Sidecar` implementation contains a bug.
 Tekton uses a container image named `nop` to terminate `Sidecars`.
@@ -542,7 +583,7 @@ The `description` field is an optional field that allows you to add an informati
 
 `Tasks` allow you to substitute variable names for the following entities:
 
-- [Parameters and resources]](#substituting-parameters-and-resources)
+- [Parameters and resources](#substituting-parameters-and-resources)
 - [`Array` parameters](#substituting-array-parameters)
 - [`Workspaces`](#substituting-workspace-paths)
 - [`Volume` names and types](#substituting-volume-names-and-paths)
@@ -562,7 +603,7 @@ variable values as follows:
 
 #### Substituting `Array` parameters
 
-You can expand referenced paramters of type `array` using the star operator. To do so, add the operator (`[*]`)
+You can expand referenced parameters of type `array` using the star operator. To do so, add the operator (`[*]`)
 to the named parameter to insert the array elements in the spot of the reference string.
 
 For example, given a `params` field with the contents listed below, you can expand
@@ -600,7 +641,7 @@ A valid reference to the `build-args` parameter is isolated and in an eligible f
 ```yaml
  - name: build-step
       image: gcr.io/cloud-builders/some-image
-      args: ["build", "$(params.build-args[*])", "additonalArg"]
+      args: ["build", "$(params.build-args[*])", "additionalArg"]
 ```
 
 #### Substituting `Workspace` paths
@@ -622,7 +663,7 @@ $(workspaces.myworkspace.volume)
 
 You can substitute `Volume` names and [types](https://kubernetes.io/docs/concepts/storage/volumes/#types-of-volumes)
 by parameterizing them. Tekton supports popular `Volume` types such as `ConfigMap`, `Secret`, and `PersistentVolumeClaim`.
-See this [example](#using-kubernetes-configmap-as-volume-source) to find out how to perform this type of substitution
+See this [example](#mounting-a-configmap-as-a-volume-source) to find out how to perform this type of substitution
 in your `Task.`
 
 ## Code examples
@@ -936,6 +977,8 @@ specified at the pod level via the TaskRun `podTemplate`.
 More information about Pod and Container Security Contexts can be found via the [Kubernetes website](https://kubernetes.io/docs/tasks/configure-pod-container/security-context/#set-the-security-context-for-a-pod).
 
 The example Task/TaskRun above can be found as a [TaskRun example](../examples/v1beta1/taskruns/run-steps-as-non-root.yaml).
+
+---
 
 Except as otherwise noted, the contents of this page are licensed under the
 [Creative Commons Attribution 4.0 License](https://creativecommons.org/licenses/by/4.0/).

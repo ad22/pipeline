@@ -120,10 +120,13 @@ type PipelineResourceBinding struct {
 
 // PipelineResourceResult used to export the image name and digest as json
 type PipelineResourceResult struct {
-	Key         string              `json:"key"`
-	Value       string              `json:"value"`
-	ResourceRef PipelineResourceRef `json:"resourceRef,omitempty"`
-	ResultType  ResultType          `json:"type,omitempty"`
+	Key          string `json:"key"`
+	Value        string `json:"value"`
+	ResourceName string `json:"resourceName,omitempty"`
+	// The field ResourceRef should be deprecated and removed in the next API version.
+	// See https://github.com/tektoncd/pipeline/issues/2694 for more information.
+	ResourceRef *PipelineResourceRef `json:"resourceRef,omitempty"`
+	ResultType  ResultType           `json:"type,omitempty"`
 }
 
 // ResultType used to find out whether a PipelineResourceResult is from a task result or not
@@ -136,6 +139,23 @@ type PipelineResourceRef struct {
 	// API version of the referent
 	// +optional
 	APIVersion string `json:"apiVersion,omitempty"`
+}
+
+// PipelineResourceInterface interface to be implemented by different PipelineResource types
+type PipelineResourceInterface interface {
+	// GetName returns the name of this PipelineResource instance.
+	GetName() string
+	// GetType returns the type of this PipelineResource (often a super type, e.g. in the case of storage).
+	GetType() PipelineResourceType
+	// Replacements returns all the attributes that this PipelineResource has that
+	// can be used for variable replacement.
+	Replacements() map[string]string
+	// GetOutputTaskModifier returns the TaskModifier instance that should be used on a Task
+	// in order to add this kind of resource when it is being used as an output.
+	GetOutputTaskModifier(ts *TaskSpec, path string) (TaskModifier, error)
+	// GetInputTaskModifier returns the TaskModifier instance that should be used on a Task
+	// in order to add this kind of resource when it is being used as an input.
+	GetInputTaskModifier(ts *TaskSpec, path string) (TaskModifier, error)
 }
 
 // TaskModifier is an interface to be implemented by different PipelineResources

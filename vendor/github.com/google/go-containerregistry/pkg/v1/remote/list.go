@@ -50,10 +50,19 @@ func ListWithContext(ctx context.Context, repo name.Repository, options ...Optio
 	}
 
 	uri := &url.URL{
-		Scheme:   repo.Registry.Scheme(),
-		Host:     repo.Registry.RegistryStr(),
-		Path:     fmt.Sprintf("/v2/%s/tags/list", repo.RepositoryStr()),
-		RawQuery: "n=10000",
+		Scheme: repo.Registry.Scheme(),
+		Host:   repo.Registry.RegistryStr(),
+		Path:   fmt.Sprintf("/v2/%s/tags/list", repo.RepositoryStr()),
+		// ECR returns an error if n > 1000:
+		// https://github.com/google/go-containerregistry/issues/681
+		RawQuery: "n=1000",
+	}
+
+	// This is lazy, but I want to make sure List(..., WithContext(ctx)) works
+	// without calling makeOptions() twice (which can have side effects).
+	// This means ListWithContext(ctx, ..., WithContext(ctx2)) prefers ctx2.
+	if o.context != context.Background() {
+		ctx = o.context
 	}
 
 	client := http.Client{Transport: tr}

@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"strings"
 
-	pipelinev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	pipelinev1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 )
 
@@ -35,12 +35,12 @@ type Resource struct {
 }
 
 // NewResource creates a new ImageResource from a PipelineResourcev1alpha1.
-func NewResource(r *resourcev1alpha1.PipelineResource) (*Resource, error) {
+func NewResource(name string, r *resourcev1alpha1.PipelineResource) (*Resource, error) {
 	if r.Spec.Type != resourcev1alpha1.PipelineResourceTypeImage {
 		return nil, fmt.Errorf("ImageResource: Cannot create an Image resource from a %s Pipeline Resource", r.Spec.Type)
 	}
 	ir := &Resource{
-		Name: r.Name,
+		Name: name,
 		Type: resourcev1alpha1.PipelineResourceTypeImage,
 	}
 
@@ -77,13 +77,13 @@ func (s *Resource) Replacements() map[string]string {
 }
 
 // GetInputTaskModifier returns the TaskModifier to be used when this resource is an input.
-func (s *Resource) GetInputTaskModifier(_ *pipelinev1alpha1.TaskSpec, _ string) (pipelinev1alpha1.TaskModifier, error) {
-	return &pipelinev1alpha1.InternalTaskModifier{}, nil
+func (s *Resource) GetInputTaskModifier(_ *pipelinev1beta1.TaskSpec, _ string) (pipelinev1beta1.TaskModifier, error) {
+	return &pipelinev1beta1.InternalTaskModifier{}, nil
 }
 
 // GetOutputTaskModifier returns a No-op TaskModifier.
-func (s *Resource) GetOutputTaskModifier(_ *pipelinev1alpha1.TaskSpec, _ string) (pipelinev1alpha1.TaskModifier, error) {
-	return &pipelinev1alpha1.InternalTaskModifier{}, nil
+func (s *Resource) GetOutputTaskModifier(_ *pipelinev1beta1.TaskSpec, _ string) (pipelinev1beta1.TaskModifier, error) {
+	return &pipelinev1beta1.InternalTaskModifier{}, nil
 }
 
 func (s Resource) String() string {

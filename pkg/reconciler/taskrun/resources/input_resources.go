@@ -17,19 +17,19 @@ limitations under the License.
 package resources
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1/storage"
 	"github.com/tektoncd/pipeline/pkg/artifacts"
-	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 )
 
-func getBoundResource(resourceName string, boundResources []v1alpha1.TaskResourceBinding) (*v1alpha1.TaskResourceBinding, error) {
+func getBoundResource(resourceName string, boundResources []v1beta1.TaskResourceBinding) (*v1beta1.TaskResourceBinding, error) {
 	for _, br := range boundResources {
 		if br.Name == resourceName {
 			return &br, nil
@@ -45,14 +45,14 @@ func getBoundResource(resourceName string, boundResources []v1alpha1.TaskResourc
 // from  previous task
 // 3. If resource has paths declared then fresh copy of resource is not fetched
 func AddInputResource(
+	ctx context.Context,
 	kubeclient kubernetes.Interface,
 	images pipeline.Images,
 	taskName string,
-	taskSpec *v1alpha1.TaskSpec,
-	taskRun *v1alpha1.TaskRun,
-	inputResources map[string]v1alpha1.PipelineResourceInterface,
-	logger *zap.SugaredLogger,
-) (*v1alpha1.TaskSpec, error) {
+	taskSpec *v1beta1.TaskSpec,
+	taskRun *v1beta1.TaskRun,
+	inputResources map[string]v1beta1.PipelineResourceInterface,
+) (*v1beta1.TaskSpec, error) {
 	if taskSpec == nil || taskSpec.Resources == nil || taskSpec.Resources.Inputs == nil {
 		return taskSpec, nil
 	}
@@ -66,10 +66,7 @@ func AddInputResource(
 	if prNameFromLabel == "" {
 		prNameFromLabel = pvcName
 	}
-	as, err := artifacts.GetArtifactStorage(images, prNameFromLabel, kubeclient, logger)
-	if err != nil {
-		return nil, err
-	}
+	as := artifacts.GetArtifactStorage(ctx, images, prNameFromLabel, kubeclient)
 
 	// Iterate in reverse through the list, each element prepends but we want the first one to remain first.
 	for i := len(taskSpec.Resources.Inputs) - 1; i >= 0; i-- {
@@ -93,11 +90,11 @@ func AddInputResource(
 		if !ok || resource == nil {
 			return nil, fmt.Errorf("failed to Get Pipeline Resource for task %s with boundResource %v", taskName, boundResource)
 		}
-		var copyStepsFromPrevTasks []v1alpha1.Step
+		var copyStepsFromPrevTasks []v1beta1.Step
 		dPath := destinationPath(input.Name, input.TargetPath)
 		// if taskrun is fetching resource from previous task then execute copy step instead of fetching new copy
 		// to the desired destination directory, as long as the resource exports output to be copied
-		if v1alpha1.AllowedOutputResources[resource.GetType()] && taskRun.HasPipelineRunOwnerReference() {
+		if v1beta1.AllowedOutputResources[resource.GetType()] && taskRun.HasPipelineRunOwnerReference() {
 			for _, path := range boundResource.Paths {
 				cpSteps := as.GetCopyFromStorageToSteps(boundResource.Name, path, dPath)
 				if as.GetType() == pipeline.ArtifactStoragePVCType {
@@ -124,7 +121,7 @@ func AddInputResource(
 			if err != nil {
 				return nil, err
 			}
-			if err := v1alpha1.ApplyTaskModifier(taskSpec, modifier); err != nil {
+			if err := v1beta1.ApplyTaskModifier(taskSpec, modifier); err != nil {
 				return nil, fmt.Errorf("unabled to apply Resource %s: %w", boundResource.Name, err)
 			}
 		}

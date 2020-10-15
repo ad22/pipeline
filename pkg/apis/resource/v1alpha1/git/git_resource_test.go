@@ -20,9 +20,10 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	tb "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
-	pipelinev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	tb "github.com/tektoncd/pipeline/internal/builder/v1beta1"
+	pipeline "github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1/git"
 	"github.com/tektoncd/pipeline/test/diff"
 	"github.com/tektoncd/pipeline/test/names"
@@ -30,7 +31,7 @@ import (
 )
 
 func TestNewGitResource_Invalid(t *testing.T) {
-	if _, err := git.NewResource("override-with-git:latest", tb.PipelineResource("git-resource", tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGCS))); err == nil {
+	if _, err := git.NewResource("test-resource", "override-with-git:latest", tb.PipelineResource("git-resource", tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGCS))); err == nil {
 		t.Error("Expected error creating Git resource")
 	}
 }
@@ -49,7 +50,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -64,16 +65,16 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "Without Revision",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
-			Revision:   "master",
+			Revision:   "",
 			Refspec:    "",
 			GitImage:   "override-with-git:latest",
 			Submodules: true,
@@ -85,17 +86,17 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With Refspec",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Refspec", "refs/changes/22/222134"),
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
-			Revision:   "master",
+			Revision:   "",
 			Refspec:    "refs/changes/22/222134",
 			GitImage:   "override-with-git:latest",
 			Submodules: true,
@@ -107,16 +108,16 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "Without Refspec",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
-			Revision:   "master",
+			Revision:   "",
 			Refspec:    "",
 			GitImage:   "override-with-git:latest",
 			Submodules: true,
@@ -128,14 +129,14 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With Submodules",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -150,7 +151,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "Without Submodules",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -158,7 +159,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -173,7 +174,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With positive depth",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -181,7 +182,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -196,7 +197,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With zero depth",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -204,7 +205,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -219,7 +220,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "Without SSLVerify",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -228,7 +229,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -243,7 +244,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With HTTPProxy",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -252,7 +253,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -267,7 +268,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With HTTPSProxy",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -276,7 +277,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -291,7 +292,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}, {
 		desc: "With NOProxy",
-		pipelineResource: tb.PipelineResource("git-resource",
+		pipelineResource: tb.PipelineResource("test-resource",
 			tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit,
 				tb.PipelineResourceSpecParam("URL", "git@github.com:test/test.git"),
 				tb.PipelineResourceSpecParam("Revision", "test"),
@@ -300,7 +301,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 			),
 		),
 		want: &git.Resource{
-			Name:       "git-resource",
+			Name:       "test-resource",
 			Type:       resourcev1alpha1.PipelineResourceTypeGit,
 			URL:        "git@github.com:test/test.git",
 			Revision:   "test",
@@ -315,7 +316,7 @@ func TestNewGitResource_Valid(t *testing.T) {
 		},
 	}} {
 		t.Run(tc.desc, func(t *testing.T) {
-			got, err := git.NewResource("override-with-git:latest", tc.pipelineResource)
+			got, err := git.NewResource("test-resource", "override-with-git:latest", tc.pipelineResource)
 			if err != nil {
 				t.Fatalf("Unexpected error creating Git resource: %s", err)
 			}
@@ -393,14 +394,15 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
@@ -429,15 +431,16 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-submodules=false",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
@@ -466,16 +469,17 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-depth",
 				"8",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
@@ -504,16 +508,17 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-submodules=false",
 				"-sslVerify=false",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
@@ -541,16 +546,17 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-submodules=false",
 				"-sslVerify=false",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
 			},
@@ -577,16 +583,17 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-submodules=false",
 				"-sslVerify=false",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
 			},
@@ -613,16 +620,17 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-submodules=false",
 				"-sslVerify=false",
 			},
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 			},
@@ -650,10 +658,10 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			Args: []string{
 				"-url",
 				"git@github.com:test/test.git",
-				"-revision",
-				"master",
 				"-path",
 				"/test/test",
+				"-revision",
+				"master",
 				"-refspec",
 				"refs/tags/v1.0:refs/tags/v1.0 refs/heads/master:refs/heads/master",
 				"-submodules=false",
@@ -661,6 +669,43 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 			WorkingDir: "/workspace",
 			Env: []corev1.EnvVar{
 				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
+				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
+				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
+				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
+			},
+		},
+	}, {
+		desc: "Without Refspec and without revision",
+		gitResource: &git.Resource{
+			Name:       "git-resource",
+			Type:       resourcev1alpha1.PipelineResourceTypeGit,
+			URL:        "git@github.com:test/test.git",
+			Revision:   "",
+			Refspec:    "",
+			GitImage:   "override-with-git:latest",
+			Submodules: false,
+			Depth:      1,
+			SSLVerify:  true,
+			HTTPProxy:  "http-proxy.git.com",
+			HTTPSProxy: "https-proxy.git.com",
+			NOProxy:    "no-proxy.git.com",
+		},
+		want: corev1.Container{
+			Name:    "git-source-git-resource-twkr2",
+			Image:   "override-with-git:latest",
+			Command: []string{"/ko-app/git-init"},
+			Args: []string{
+				"-url",
+				"git@github.com:test/test.git",
+				"-path",
+				"/test/test",
+				"-submodules=false",
+			},
+			WorkingDir: "/workspace",
+			Env: []corev1.EnvVar{
+				{Name: "TEKTON_RESOURCE_NAME", Value: "git-resource"},
+				{Name: "HOME", Value: pipeline.HomeDir},
 				{Name: "HTTP_PROXY", Value: "http-proxy.git.com"},
 				{Name: "HTTPS_PROXY", Value: "https-proxy.git.com"},
 				{Name: "NO_PROXY", Value: "no-proxy.git.com"},
@@ -668,13 +713,13 @@ func TestGitResource_GetDownloadTaskModifier(t *testing.T) {
 		},
 	}} {
 		t.Run(tc.desc, func(t *testing.T) {
-			ts := pipelinev1alpha1.TaskSpec{}
+			ts := v1beta1.TaskSpec{}
 			modifier, err := tc.gitResource.GetInputTaskModifier(&ts, "/test/test")
 			if err != nil {
 				t.Fatalf("Unexpected error getting GetDownloadTaskModifier: %s", err)
 			}
 
-			if d := cmp.Diff([]pipelinev1alpha1.Step{{Container: tc.want}}, modifier.GetStepsToPrepend()); d != "" {
+			if d := cmp.Diff([]v1beta1.Step{{Container: tc.want}}, modifier.GetStepsToPrepend()); d != "" {
 				t.Errorf("Mismatch of GitResource DownloadContainerSpec %s", diff.PrintWantGot(d))
 			}
 		})

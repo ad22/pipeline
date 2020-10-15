@@ -11,16 +11,17 @@ weight: 5
   - [`Workspaces` in `Pipelines` and `PipelineRuns`](#workspaces-in-pipelines-and-pipelineruns)
 - [Configuring `Workspaces`](#configuring-workspaces)
   - [Using `Workspaces` in `Tasks`](#using-workspaces-in-tasks)
-    - [Using `Workspace` variables in `TaskRuns`](#using-workspace-variables-in-taskruns)
+    - [Using `Workspace` variables in `Tasks`](#using-workspace-variables-in-tasks)
     - [Mapping `Workspaces` in `Tasks` to `TaskRuns`](#mapping-workspaces-in-tasks-to-taskruns)
-    - [Examples of `TaskRun` definitions using `Workspaces`](#examples-of-taskrun-definitions-using-workspaces)
+    - [Examples of `TaskRun` definition using `Workspaces`](#examples-of-taskrun-definition-using-workspaces)
   - [Using `Workspaces` in `Pipelines`](#using-workspaces-in-pipelines)
-    - [Specifying `Workspace` order in a `Pipeline`](#specifying-workspace-order-in-a-pipeline)
+    - [Specifying `Workspace` order in a `Pipeline` and Affinity Assistants](#specifying-workspace-order-in-a-pipeline-and-affinity-assistants)
     - [Specifying `Workspaces` in `PipelineRuns`](#specifying-workspaces-in-pipelineruns)
-    - [Example `PipelineRun` definition using `Workspaces`](#example-pipelinerun-definitions-using-workspaces)
+    - [Example `PipelineRun` definition using `Workspaces`](#example-pipelinerun-definition-using-workspaces)
   - [Specifying `VolumeSources` in `Workspaces`](#specifying-volumesources-in-workspaces)
     - [Using `PersistentVolumeClaims` as `VolumeSource`](#using-persistentvolumeclaims-as-volumesource)
     - [Using other types of `VolumeSources`](#using-other-types-of-volumesources)
+- [Using Persistent Volumes within a `PipelineRun`](#using-persistent-volumes-within-a-pipelinerun)
 - [More examples](#more-examples)
 
 ## Overview
@@ -57,6 +58,10 @@ data for the `Task` to process. In both scenarios the `Task's`
 `Workspace` declaration remains the same and only the runtime
 information in the `TaskRun` changes.
 
+Tasks can also share Workspaces with their Sidecars, though there's a little more
+configuration involved to add the required `volumeMount`. This allows for a
+long-running process in a Sidecar to share data with the executing Steps of a Task.
+
 ### `Workspaces` in `Pipelines` and `PipelineRuns`
 
 A `Pipeline` can use `Workspaces` to show how storage will be shared through
@@ -71,6 +76,18 @@ specific `Volume` information to use for the `Workspaces` used by each `Pipeline
 `PipelineRuns` have the added responsibility of ensuring that whatever `Volume` type they
 provide can be safely and correctly shared across multiple `Tasks`.
 
+### Optional `Workspaces`
+
+Both Tasks and Pipelines can declare a Workspace "optional". When an optional Workspace
+is declared the TaskRun or PipelineRun may omit a Workspace Binding for that Workspace.
+The Task or Pipeline behaviour may change when the Binding is omitted. This feature has
+many uses:
+
+- A Task may optionally accept credentials to run authenticated commands.
+- A Pipeline may accept optional configuration that changes the linting or compilation
+parameters used.
+- An optional build cache may be provided to speed up compile times.
+
 ## Configuring `Workspaces`
 
 This section describes how to configure one or more `Workspaces` in a `TaskRun`.
@@ -81,22 +98,24 @@ To configure one or more `Workspaces` in a `Task`, add a `workspaces` list with 
 
 - `name` -  (**required**) A **unique** string identifier that can be used to refer to the workspace
 - `description` - An informative string describing the purpose of the `Workspace`
-- `readOnly` - A boolean declaring whether the `Task` will write to the `Workspace`.
+- `readOnly` - A boolean declaring whether the `Task` will write to the `Workspace`. Defaults to `false`.
+- `optional` - A boolean indicating whether a TaskRun can omit the `Workspace`. Defaults to `false`.
 - `mountPath` - A path to a location on disk where the workspace will be available to `Steps`. Relative
   paths will be prepended with `/workspace`. If a `mountPath` is not provided the workspace
   will be placed by default at `/workspace/<name>` where `<name>` is the workspace's
   unique name.
-  
+
 Note the following:
-  
-- A `Task` definition can include as many `Workspaces` as it needs. 
+
+- A `Task` definition can include as many `Workspaces` as it needs. It is recommended that `Tasks` use
+  **at most** one _writeable_ `Workspace`.
 - A `readOnly` `Workspace` will have its volume mounted as read-only. Attempting to write
   to a `readOnly` `Workspace` will result in errors and failed `TaskRuns`.
 - `mountPath` can be either absolute or relative. Absolute paths start with `/` and relative paths
   start with the name of a directory. For example, a `mountPath` of `"/foobar"` is  absolute and exposes
   the `Workspace` at `/foobar` inside the `Task's` `Steps`, but a `mountPath` of `"foobar"` is relative and
   exposes the `Workspace` at `/workspace/foobar`.
-    
+
 Below is an example `Task` definition that includes a `Workspace` called `messages` to which the `Task` writes a message:
 
 ```yaml
@@ -107,19 +126,77 @@ spec:
     script: |
       #!/usr/bin/env bash
       set -xe
-      echo hello! > $(workspaces.messages.path)/message
+      if [ "$(workspaces.messages.bound)" == "true" ] ; then
+        echo hello! > $(workspaces.messages.path)/message
+      fi
   workspaces:
   - name: messages
-    description: The folder where we write the message to
+    description: |
+      The folder where we write the message to. If no workspace
+      is provided then the message will not be written.
+    optional: true
     mountPath: /custom/path/relative/to/root
 ```
+
+#### Sharing `Workspaces` with `Sidecars`
+
+A `Task's` `Sidecars` are also able to access the `Workspaces` the `Task` defines but must have their
+`volumeMount` configuration set explicitly. Below is an example `Task` that shares a `Workspace` between
+its `Steps` and its `Sidecar`. In the example a `Sidecar` sleeps for a short amount of time and then writes
+a `ready` file which the `Step` is waiting for:
+
+```yaml
+spec:
+  workspaces:
+  - name: signals
+  steps:
+  - image: alpine
+    script: |
+      while [ ! -f "$(workspaces.signals.path)/ready" ]; do
+        echo "Waiting for ready file..."
+        sleep 1
+      done
+      echo "Saw ready file!"
+  sidecars:
+  - image: alpine
+    # Note: must explicitly include volumeMount for the workspace to be accessible in the Sidecar
+    volumeMounts:
+    - name: $(workspaces.signals.volume)
+      mountPath: $(workspaces.signals.path)
+    script: |
+      sleep 3
+      touch "$(workspaces.signals.path)/ready"
+```
+
+**Note:** Sidecars _must_ explicitly opt-in to receiving the Workspace volume. Injected Sidecars from
+non-Tekton sources will not receive access to Workspaces.
+
+#### Setting a Default TaskRun Workspace Binding
+
+An organization may want to specify default Workspace configuration for TaskRuns. This allows users to
+use Tasks without having to know the specifics of Workspaces - they can simply rely on the platform
+to use the default configuration when a Workspace is missing. To support this Tekton allows a default
+Workspace Binding to be specified for TaskRuns. When the TaskRun executes, any Workspaces that a Task
+requires but which are not provided by the TaskRun will be bound with the default configuration.
+
+The configuration for the default Workspace Binding is added to the `config-defaults` ConfigMap, under
+the `default-task-run-workspace-binding` key. For an example, see the [Customizing basic execution
+parameters](./install.md#customizing-basic-execution-parameters) section of the install doc.
+
+**Note:** the default configuration is used for any _required_ Workspace declared by a Task. Optional
+Workspaces are not populated with the default binding. This is because a Task's behaviour will typically
+differ slightly when an optional Workspace is bound.
 
 #### Using `Workspace` variables in `Tasks`
 
 The following variables make information about `Workspaces` available to `Tasks`:
 
 - `$(workspaces.<name>.path)` - specifies the path to a `Workspace`
-   where `<name>` is the name of the `Workspace`.
+   where `<name>` is the name of the `Workspace`. This will be an
+   empty string when a Workspace is declared optional and not provided
+   by a TaskRun.
+- `$(workspaces.<name>.bound)` - either `true` or `false`, specifies
+   whether a workspace was bound. Always `true` if the workspace is required.
 - `$(workspaces.<name>.claim)` - specifies the name of the `PersistentVolumeClaim` used as a volume source for the `Workspace` 
    where `<name>` is the name of the `Workspace`. If a volume source other than `PersistentVolumeClaim` is used, an empty string is returned.
 - `$(workspaces.<name>.volume)`- specifies the name of the `Volume`
@@ -134,73 +211,33 @@ its own `workspaces` list. Each entry in the list contains the following fields:
 - `name` - (**required**) The name of the `Workspace` within the `Task` for which the `Volume` is being provided
 - `subPath` - An optional subdirectory on the `Volume` to store data for that `Workspace`
 
-The entry must also include one `VolumeSource`. See [Using `VolumeSources` with `Workspaces`](#specifying-volumesources-in-workspaces) for more information.
-               
+The entry must also include one `VolumeSource`. See [Specifying `VolumeSources` in `Workspaces`](#specifying-volumesources-in-workspaces) for more information.
+
 **Caution:**
-- The `subPath` *must* exist on the `Volume` before the `TaskRun` executes or the execution will fail.
 - The `Workspaces` declared in a `Task` must be available when executing the associated `TaskRun`.
   Otherwise, the `TaskRun` will fail.
 
-#### Examples of `TaskRun` definitions using `Workspaces`
+#### Examples of `TaskRun` definition using `Workspaces`
 
-The following examples illustrate how to specify `Workspaces` in your `TaskRun` definition.
-For a more in-depth example, see [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml).
-
-In the example below, a template is provided for how a `PersistentVolumeClaim` should be created for a Task's workspace named `myworkspace`. When using `volumeClaimTemplate` a new `PersistentVolumeClaim` is created for each `TaskRun` and it allows the user to specify e.g. size and StorageClass for the volume.
-
-```yaml
-workspaces:
-- name: myworkspace
-  volumeClaimTemplate:
-    spec:
-      accessModes: 
-      - ReadWriteOnce
-      resources:
-        requests:
-          storage: 1Gi
-```
-
-In the example below, an existing `PersistentVolumeClaim` called `mypvc` is used for a Task's `workspace`
-called `myworkspace`. It exposes only the subdirectory `my-subdir` from that `PersistentVolumeClaim`:
-
-```yaml
-workspaces:
-- name: myworkspace
-  persistentVolumeClaim:
-    claimName: mypvc
-  subPath: my-subdir
-```
-
-In the example below, an [`emptyDir`](https://kubernetes.io/docs/concepts/storage/volumes/#emptydir)
+The following example illustrate how to specify `Workspaces` in your `TaskRun` definition,
+an [`emptyDir`](https://kubernetes.io/docs/concepts/storage/volumes/#emptydir)
 is provided for a Task's `workspace` called `myworkspace`:
 
 ```yaml
-workspaces:
-- name: myworkspace
-  emptyDir: {}
+apiVersion: tekton.dev/v1beta1
+kind: TaskRun
+metadata:
+  generateName: example-taskrun-
+spec:
+  taskRef:
+    name: example-task
+  workspaces:
+    - name: myworkspace # this workspace name must be declared in the Task
+      emptyDir: {}      # emptyDir volumes can be used for TaskRuns, 
+                        # but consider using a PersistentVolumeClaim for PipelineRuns
 ```
-
-In the example below, a `ConfigMap` named `my-configmap` is used for a `Workspace` 
-named `myworkspace` declared inside a `Task`:
-
-```yaml
-workspaces:
-- name: myworkspace
-  configmap:
-    name: my-configmap
-```
-
-In this example, a `Secret` named `my-secret` is used for a `Workspace` 
-named `myworkspace` declared inside a `Task`:
-
-```yaml
-workspaces:
-- name: myworkspace
-  secret:
-    secretName: my-secret
-```
-
-For a more in-depth example, see [workspace.yaml](../examples/v1beta1/taskruns/workspace.yaml).
+For examples of using other types of volume sources, see [Specifying `VolumeSources` in `Workspaces`](#specifying-volumesources-in-workspaces).
+For a more in-depth example, see [`Workspaces` in a `TaskRun`](../examples/v1beta1/taskruns/workspace.yaml).
 
 ### Using `Workspaces` in `Pipelines`
 
@@ -223,6 +260,8 @@ data within that `Workspace`.
 spec:
   workspaces:
     - name: pipeline-ws1 # Name of the workspace in the Pipeline
+    - name: pipeline-ws2
+      optional: true
   tasks:
     - name: use-ws-from-pipeline
       taskRef:
@@ -244,26 +283,29 @@ Include a `subPath` in the workspace binding to mount different parts of the sam
 
 The `subPath` specified in a `Pipeline` will be appended to any `subPath` specified as part of the `PipelineRun` workspace declaration. So a `PipelineRun` declaring a Workspace with `subPath` of `/foo` for a `Pipeline` who binds it to a `Task` with `subPath` of `/bar` will end up mounting the `Volume`'s `/foo/bar` directory.
 
-#### Specifying `Workspace` order in a `Pipeline`
+#### Specifying `Workspace` order in a `Pipeline` and Affinity Assistants
 
 Sharing a `Workspace` between `Tasks` requires you to define the order in which those `Tasks`
-will be accessing that `Workspace` since different classes of storage have different limits
-for concurrent reads and writes. For example, a `PersistentVolumeClaim` with
-[access mode](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes)
-`ReadWriteOnce` only allow `Tasks` on the same node writing to it at once.
+write to or read from that `Workspace`. Use the `runAfter` field in your `Pipeline` definition
+to define when a `Task` should be executed. For more information, see the [`runAfter` documentation](pipelines.md#using-the-runafter-parameter).
 
-Using parallel `Tasks` in a `Pipeline` will work with `PersistentVolumeClaims` configured with
-[access mode](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes)
-`ReadWriteMany` or `ReadOnlyMany` but you must ensure that those are available for your storage class.
-When using `PersistentVolumeClaims` with access mode `ReadWriteOnce` for parallel `Tasks`, you can configure a
-workspace with it's own `PersistentVolumeClaim` for each parallel `Task`.
+When a `PersistentVolumeClaim` is used as volume source for a `Workspace` in a `PipelineRun`,
+an Affinity Assistant will be created. The Affinity Assistant acts as a placeholder for `TaskRun` pods
+sharing the same `Workspace`. All `TaskRun` pods within the `PipelineRun` that share the `Workspace`
+will be scheduled to the same Node as the Affinity Assistant pod. This means that Affinity Assistant is incompatible
+with e.g. other affinity rules configured for the `TaskRun` pods. If the `PipelineRun` has a custom
+[PodTemplate](pipelineruns.md#specifying-a-pod-template) configured, the `NodeSelector` and `Tolerations` fields
+will also be set on the Affinity Assistant pod. The Affinity Assistant
+is deleted when the `PipelineRun` is completed. The Affinity Assistant can be disabled by setting the
+[disable-affinity-assistant](install.md#customizing-basic-execution-parameters) feature gate to `true`.
 
-Use the `runAfter` field in your `Pipeline` definition to define when a `Task` should be executed. For more
-information, see the [`runAfter` documentation](pipelines.md#runAfter).
+**Note:** Affinity Assistant use [Inter-pod affinity and anti-affinity](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
+that require substantial amount of processing which can slow down scheduling in large clusters
+significantly. We do not recommend using them in clusters larger than several hundred nodes
 
-**Warning:** You *must* ensure that this order is compatible with the configured access modes for your `PersistentVolumeClaim`.
-Parallel `Tasks` using the same `PersistentVolumeClaim` with access mode `ReadWriteOnce`, may execute on
-different nodes and be forced to execute sequentially which may cause `Tasks` to time out.
+**Note:** Pod anti-affinity requires nodes to be consistently labelled, in other words every
+node in the cluster must have an appropriate label matching `topologyKey`. If some or all nodes
+are missing the specified `topologyKey` label, it can lead to unintended behavior.
 
 #### Specifying `Workspaces` in `PipelineRuns`
 
@@ -290,7 +332,7 @@ each `PipelineRun` and it allows the user to specify e.g. size and StorageClass 
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  generateName: pr-
+  generateName: example-pipelinerun-
 spec:
   pipelineRef:
     name: example-pipeline
@@ -317,8 +359,8 @@ options differ for each type. `Workspaces` support the following fields:
 
 `PersistentVolumeClaim` volumes are a good choice for sharing data among `Tasks` within a `Pipeline`.
 Beware that the [access mode](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes)
-configured for the `PersinstentVolumeClaim` effects how you can use the volume for parallel `Tasks` in a `Pipeline`. See
-[Specifying `workspace` order in a `Pipeline`](#specifying-workspace-order-in-a-pipeline) for more information about this.
+configured for the `PersistentVolumeClaim` effects how you can use the volume for parallel `Tasks` in a `Pipeline`. See
+[Specifying `workspace` order in a `Pipeline` and Affinity Assistants](#specifying-workspace-order-in-a-pipeline-and-affinity-assistants) for more information about this.
 There are two ways of using `PersistentVolumeClaims` as a `VolumeSource`.
 
 ##### `volumeClaimTemplate`
@@ -399,6 +441,46 @@ workspaces:
 
 If you need support for a `VolumeSource` type not listed above, [open an issue](https://github.com/tektoncd/pipeline/issues) or
 a [pull request](https://github.com/tektoncd/pipeline/blob/master/CONTRIBUTING.md).
+
+## Using Persistent Volumes within a `PipelineRun`
+
+When using a workspace with a [`PersistentVolumeClaim` as `VolumeSource`](#using-persistentvolumeclaims-as-volumesource),
+a Kubernetes [Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/) is used within the `PipelineRun`.
+There are some details that are good to know when using Persistent Volumes within a `PipelineRun`.
+
+### Storage Class
+
+`PersistentVolumeClaims` specify a [Storage Class](https://kubernetes.io/docs/concepts/storage/storage-classes/) for the underlying Persistent Volume. Storage Classes have specific
+characteristics. If a StorageClassName is not specified for your `PersistentVolumeClaim`, the cluster defined _default_
+Storage Class is used. For _regional_ clusters - clusters that typically consist of Nodes located in multiple Availability
+Zones - it is important to know whether your Storage Class is available to all Nodes. Default Storage Classes are typically
+only available to Nodes within *one* Availability Zone. There is usually an option to use a _regional_ Storage Class,
+but they have trade-offs, e.g. you need to pay for multiple volumes since they are replicated and your volume may have 
+substantially higher latency.
+
+When using a workspace backed by a `PersistentVolumeClaim` (typically only available within a Data Center) and the `TaskRun`
+pods can be scheduled to any Availability Zone in a regional cluster, some techniques must be used to avoid deadlock in the `Pipeline`.
+
+Tekton provides an Affinity Assistant that schedules all TaskRun Pods sharing a `PersistentVolumeClaim` to the same
+Node. This avoids deadlocks that can happen when two Pods requiring the same Volume are scheduled to different Availability Zones.
+A volume typically only lives within a single Availability Zone.
+
+### Access Modes
+
+A `PersistentVolumeClaim` specifies an [Access Mode](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes).
+Available Access Modes are `ReadWriteOnce`, `ReadWriteMany` and `ReadOnlyMany`. What Access Mode you can use depend on
+the storage solution that you are using.
+
+* `ReadWriteOnce` is the most commonly available Access Mode. A volume with this Access Mode can only be mounted on one
+  Node at a time. This can be problematic for a `Pipeline` that has parallel `Tasks` that access the volume concurrently.
+  The Affinity Assistant helps with this problem by scheduling all `Tasks` that use the same `PersistentVolumeClaim` to
+  the same Node.
+  
+* `ReadOnlyMany` is read-only and is less common in a CI/CD-pipeline. These volumes often need to be "prepared" with data
+  in some way before use. Dynamically provided volumes can usually not be used in read-only mode.
+
+* `ReadWriteMany` is the least commonly available Access Mode. If you use this access mode and these volumes are available
+  to all Nodes within your cluster, you may want to disable the Affinity Assistant.
 
 ## More examples
 

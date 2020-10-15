@@ -17,6 +17,8 @@ package ocagent
 import (
 	"time"
 
+	"go.opencensus.io/resource"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
 
@@ -27,6 +29,22 @@ const (
 
 type ExporterOption interface {
 	withExporter(e *Exporter)
+}
+
+type resourceDetector resource.Detector
+
+var _ ExporterOption = (*resourceDetector)(nil)
+
+func (rd resourceDetector) withExporter(e *Exporter) {
+	e.resourceDetector = resource.Detector(rd)
+}
+
+// WithResourceDetector allows one to register a resource detector. Resource Detector is used
+// to detect resources associated with the application. Detected resource is exported
+// along with the metrics. If the detector fails then it panics.
+// If a resource detector is not provided then by default it detects from the environment.
+func WithResourceDetector(rd resource.Detector) ExporterOption {
+	return resourceDetector(rd)
 }
 
 type insecureGrpcConnection int
@@ -125,4 +143,64 @@ func WithTLSCredentials(creds credentials.TransportCredentials) ExporterOption {
 
 func (cc *clientCredentials) withExporter(e *Exporter) {
 	e.clientTransportCredentials = cc.TransportCredentials
+}
+
+type grpcDialOptions []grpc.DialOption
+
+var _ ExporterOption = (*grpcDialOptions)(nil)
+
+// WithGRPCDialOption opens support to any grpc.DialOption to be used. If it conflicts
+// with some other configuration the GRPC specified via the agent the ones here will
+// take preference since they are set last.
+func WithGRPCDialOption(opts ...grpc.DialOption) ExporterOption {
+	return grpcDialOptions(opts)
+}
+
+func (opts grpcDialOptions) withExporter(e *Exporter) {
+	e.grpcDialOptions = opts
+}
+
+type metricNamePrefixSetter string
+
+var _ ExporterOption = (*metricNamePrefixSetter)(nil)
+
+func (p metricNamePrefixSetter) withExporter(e *Exporter) {
+	e.metricNamePerfix = string(p)
+}
+
+// WithMetricNamePrefix provides an option for the caller to add a prefix to metric names.
+func WithMetricNamePrefix(prefix string) ExporterOption {
+	return metricNamePrefixSetter(prefix)
+}
+
+type dataBundlerOptions struct {
+	delay time.Duration
+	count int
+}
+
+var _ ExporterOption = (*dataBundlerOptions)(nil)
+
+func (b dataBundlerOptions) withExporter(e *Exporter) {
+	if b.delay > 0 {
+		e.viewDataDelay = b.delay
+	}
+	if b.count > 0 {
+		e.viewDataBundleCount = b.count
+	}
+}
+
+// WithDataBundlerOptions provides an option for the caller to configure the metrics data bundler.
+func WithDataBundlerOptions(delay time.Duration, count int) ExporterOption {
+	return dataBundlerOptions{delay, count}
+}
+
+func (spanConfig SpanConfig) withExporter(e *Exporter) {
+	e.spanConfig = spanConfig
+}
+
+var _ ExporterOption = (*SpanConfig)(nil)
+
+// WithSpanConfig allows one to set the AnnotationEventsPerSpan and MessageEventsPerSpan
+func WithSpanConfig(spanConfig SpanConfig) ExporterOption {
+	return spanConfig
 }

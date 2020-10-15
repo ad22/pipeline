@@ -305,19 +305,6 @@ func TaskResourcesOutput(name string, resourceType resource.PipelineResourceType
 	}
 }
 
-// TaskResultsOutput adds a TaskResult as Outputs to the TaskResources
-func TaskResultsOutput(name, desc string, ops ...TaskResultOp) TaskResultOp {
-	return func(result *v1beta1.TaskResult) {
-		r := &v1beta1.TaskResult{
-			Name:        name,
-			Description: desc,
-		}
-		for _, op := range ops {
-			op(r)
-		}
-	}
-}
-
 // ResourceOptional marks a TaskResource as optional.
 func ResourceOptional(optional bool) TaskResourceOp {
 	return func(r *v1beta1.TaskResource) {
@@ -474,36 +461,6 @@ func TaskRunNodeSelector(values map[string]string) TaskRunSpecOp {
 	}
 }
 
-// TaskRunTolerations sets the Tolerations to the TaskRunSpec.
-func TaskRunTolerations(values []corev1.Toleration) TaskRunSpecOp {
-	return func(spec *v1beta1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1beta1.PodTemplate{}
-		}
-		spec.PodTemplate.Tolerations = values
-	}
-}
-
-// TaskRunAffinity sets the Affinity to the TaskRunSpec.
-func TaskRunAffinity(affinity *corev1.Affinity) TaskRunSpecOp {
-	return func(spec *v1beta1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1beta1.PodTemplate{}
-		}
-		spec.PodTemplate.Affinity = affinity
-	}
-}
-
-// TaskRunPodSecurityContext sets the SecurityContext to the TaskRunSpec (through PodTemplate).
-func TaskRunPodSecurityContext(context *corev1.PodSecurityContext) TaskRunSpecOp {
-	return func(spec *v1beta1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1beta1.PodTemplate{}
-		}
-		spec.PodTemplate.SecurityContext = context
-	}
-}
-
 // StateTerminated sets Terminated to the StepState.
 func StateTerminated(exitcode int) StepStateOp {
 	return func(s *v1beta1.StepState) {
@@ -573,6 +530,18 @@ func TaskRunLabel(key, value string) TaskRunOp {
 			tr.ObjectMeta.Labels = map[string]string{}
 		}
 		tr.ObjectMeta.Labels[key] = value
+	}
+}
+
+// TaskRunAnnotations adds the specified annotations to the TaskRun.
+func TaskRunAnnotations(annotations map[string]string) TaskRunOp {
+	return func(tr *v1beta1.TaskRun) {
+		if tr.ObjectMeta.Annotations == nil {
+			tr.ObjectMeta.Annotations = map[string]string{}
+		}
+		for key, value := range annotations {
+			tr.ObjectMeta.Annotations[key] = value
+		}
 	}
 }
 
@@ -668,11 +637,10 @@ func TaskRunServiceAccountName(sa string) TaskRunSpecOp {
 
 // TaskRunParam sets the Params to the TaskSpec
 func TaskRunParam(name, value string, additionalValues ...string) TaskRunSpecOp {
-	arrayOrString := ArrayOrString(value, additionalValues...)
 	return func(spec *v1beta1.TaskRunSpec) {
 		spec.Params = append(spec.Params, v1beta1.Param{
 			Name:  name,
-			Value: *arrayOrString,
+			Value: *v1beta1.NewArrayOrString(value, additionalValues...),
 		})
 	}
 }
@@ -745,6 +713,13 @@ func TaskResourceBindingRefAPIVersion(version string) TaskResourceBindingOp {
 func TaskResourceBindingPaths(paths ...string) TaskResourceBindingOp {
 	return func(b *v1beta1.TaskResourceBinding) {
 		b.Paths = paths
+	}
+}
+
+// TaskRunPodTemplate add a custom PodTemplate to the TaskRun
+func TaskRunPodTemplate(podTemplate *v1beta1.PodTemplate) TaskRunSpecOp {
+	return func(spec *v1beta1.TaskRunSpec) {
+		spec.PodTemplate = podTemplate
 	}
 }
 

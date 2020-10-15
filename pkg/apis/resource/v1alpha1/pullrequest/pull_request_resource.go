@@ -22,7 +22,7 @@ import (
 	"strings"
 
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
-	pipelinev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	pipelinev1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/names"
 	corev1 "k8s.io/api/core/v1"
@@ -49,21 +49,23 @@ type Resource struct {
 	// Secrets holds a struct to indicate a field name and corresponding secret name to populate it.
 	Secrets []resourcev1alpha1.SecretParam `json:"secrets"`
 
-	PRImage               string `json:"-"`
-	InsecureSkipTLSVerify bool   `json:"insecure-skip-tls-verify"`
+	PRImage                   string `json:"-"`
+	InsecureSkipTLSVerify     bool   `json:"insecure-skip-tls-verify"`
+	DisableStrictJSONComments bool   `json:"disable-strict-json-comments"`
 }
 
 // NewResource create a new git resource to pass to a Task
-func NewResource(prImage string, r *resourcev1alpha1.PipelineResource) (*Resource, error) {
+func NewResource(name, prImage string, r *resourcev1alpha1.PipelineResource) (*Resource, error) {
 	if r.Spec.Type != resourcev1alpha1.PipelineResourceTypePullRequest {
 		return nil, fmt.Errorf("cannot create a PR resource from a %s Pipeline Resource", r.Spec.Type)
 	}
 	prResource := Resource{
-		Name:                  r.Name,
-		Type:                  r.Spec.Type,
-		Secrets:               r.Spec.SecretParams,
-		PRImage:               prImage,
-		InsecureSkipTLSVerify: false,
+		Name:                      name,
+		Type:                      r.Spec.Type,
+		Secrets:                   r.Spec.SecretParams,
+		PRImage:                   prImage,
+		InsecureSkipTLSVerify:     false,
+		DisableStrictJSONComments: false,
 	}
 	for _, param := range r.Spec.Params {
 		switch {
@@ -77,6 +79,12 @@ func NewResource(prImage string, r *resourcev1alpha1.PipelineResource) (*Resourc
 				return nil, fmt.Errorf("error occurred converting %q to boolean in Pipeline Resource %s", param.Value, r.Name)
 			}
 			prResource.InsecureSkipTLSVerify = verify
+		case strings.EqualFold(param.Name, "disable-strict-json-comments"):
+			strict, err := strconv.ParseBool(param.Value)
+			if err != nil {
+				return nil, fmt.Errorf("error occurred converting %q to boolean in Pipeline Resource %s", param.Value, r.Name)
+			}
+			prResource.DisableStrictJSONComments = strict
 		}
 	}
 
@@ -101,35 +109,39 @@ func (s *Resource) GetURL() string {
 // Replacements is used for template replacement on a PullRequestResource inside of a Taskrun.
 func (s *Resource) Replacements() map[string]string {
 	return map[string]string{
-		"name":                     s.Name,
-		"type":                     s.Type,
-		"url":                      s.URL,
-		"provider":                 s.Provider,
-		"insecure-skip-tls-verify": strconv.FormatBool(s.InsecureSkipTLSVerify),
+		"name":                         s.Name,
+		"type":                         s.Type,
+		"url":                          s.URL,
+		"provider":                     s.Provider,
+		"insecure-skip-tls-verify":     strconv.FormatBool(s.InsecureSkipTLSVerify),
+		"disable-strict-json-comments": strconv.FormatBool(s.DisableStrictJSONComments),
 	}
 }
 
 // GetInputTaskModifier returns the TaskModifier to be used when this resource is an input.
-func (s *Resource) GetInputTaskModifier(ts *pipelinev1alpha1.TaskSpec, sourcePath string) (pipelinev1alpha1.TaskModifier, error) {
-	return &pipelinev1alpha1.InternalTaskModifier{
+func (s *Resource) GetInputTaskModifier(ts *pipelinev1beta1.TaskSpec, sourcePath string) (pipelinev1beta1.TaskModifier, error) {
+	return &pipelinev1beta1.InternalTaskModifier{
 		StepsToPrepend: s.getSteps("download", sourcePath),
 	}, nil
 }
 
 // GetOutputTaskModifier returns a No-op TaskModifier.
-func (s *Resource) GetOutputTaskModifier(ts *pipelinev1alpha1.TaskSpec, sourcePath string) (pipelinev1alpha1.TaskModifier, error) {
-	return &pipelinev1alpha1.InternalTaskModifier{
+func (s *Resource) GetOutputTaskModifier(ts *pipelinev1beta1.TaskSpec, sourcePath string) (pipelinev1beta1.TaskModifier, error) {
+	return &pipelinev1beta1.InternalTaskModifier{
 		StepsToAppend: s.getSteps("upload", sourcePath),
 	}, nil
 }
 
-func (s *Resource) getSteps(mode string, sourcePath string) []pipelinev1alpha1.Step {
+func (s *Resource) getSteps(mode string, sourcePath string) []pipelinev1beta1.Step {
 	args := []string{"-url", s.URL, "-path", sourcePath, "-mode", mode}
 	if s.Provider != "" {
 		args = append(args, []string{"-provider", s.Provider}...)
 	}
 	if s.InsecureSkipTLSVerify {
 		args = append(args, "-insecure-skip-tls-verify=true")
+	}
+	if s.DisableStrictJSONComments {
+		args = append(args, "-disable-strict-json-comments=true")
 	}
 
 	evs := []corev1.EnvVar{}
@@ -150,7 +162,7 @@ func (s *Resource) getSteps(mode string, sourcePath string) []pipelinev1alpha1.S
 		}
 	}
 
-	return []pipelinev1alpha1.Step{{Container: corev1.Container{
+	return []pipelinev1beta1.Step{{Container: corev1.Container{
 		Name:       names.SimpleNameGenerator.RestrictLengthWithRandomSuffix(prSource + "-" + s.Name),
 		Image:      s.PRImage,
 		Command:    []string{"/ko-app/pullrequest-init"},

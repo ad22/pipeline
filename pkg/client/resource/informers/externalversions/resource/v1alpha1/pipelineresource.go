@@ -1,5 +1,5 @@
 /*
-Copyright 2019 The Tekton Authors
+Copyright 2020 The Tekton Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"context"
 	time "time"
 
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
@@ -61,13 +62,13 @@ func NewFilteredPipelineResourceInformer(client versioned.Interface, namespace s
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.TektonV1alpha1().PipelineResources(namespace).List(options)
+				return client.TektonV1alpha1().PipelineResources(namespace).List(context.TODO(), options)
 			},
 			WatchFunc: func(options v1.ListOptions) (watch.Interface, error) {
 				if tweakListOptions != nil {
 					tweakListOptions(&options)
 				}
-				return client.TektonV1alpha1().PipelineResources(namespace).Watch(options)
+				return client.TektonV1alpha1().PipelineResources(namespace).Watch(context.TODO(), options)
 			},
 		},
 		&resourcev1alpha1.PipelineResource{},

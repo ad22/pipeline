@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	tb "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
+	tb "github.com/tektoncd/pipeline/internal/builder/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
-	pipelinev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1/pullrequest"
 	"github.com/tektoncd/pipeline/test/diff"
@@ -37,20 +37,22 @@ func TestPullRequest_NewResource(t *testing.T) {
 		tb.PipelineResourceSpecParam("url", url),
 		tb.PipelineResourceSpecParam("provider", "github"),
 		tb.PipelineResourceSpecSecretParam("authToken", "test-secret-key", "test-secret-name"),
+		tb.PipelineResourceSpecParam("disable-strict-json-comments", "true"),
 	))
-	got, err := pullrequest.NewResource("override-with-pr:latest", pr)
+	got, err := pullrequest.NewResource("test-resource", "override-with-pr:latest", pr)
 	if err != nil {
 		t.Fatalf("Error creating storage resource: %s", err.Error())
 	}
 
 	want := &pullrequest.Resource{
-		Name:                  pr.Name,
-		Type:                  resourcev1alpha1.PipelineResourceTypePullRequest,
-		URL:                   url,
-		Provider:              "github",
-		Secrets:               pr.Spec.SecretParams,
-		PRImage:               "override-with-pr:latest",
-		InsecureSkipTLSVerify: false,
+		Name:                      "test-resource",
+		Type:                      resourcev1alpha1.PipelineResourceTypePullRequest,
+		URL:                       url,
+		Provider:                  "github",
+		Secrets:                   pr.Spec.SecretParams,
+		PRImage:                   "override-with-pr:latest",
+		InsecureSkipTLSVerify:     false,
+		DisableStrictJSONComments: true,
 	}
 	if d := cmp.Diff(want, got); d != "" {
 		t.Error(diff.PrintWantGot(d))
@@ -59,14 +61,14 @@ func TestPullRequest_NewResource(t *testing.T) {
 
 func TestPullRequest_NewResource_error(t *testing.T) {
 	pr := tb.PipelineResource("foo", tb.PipelineResourceSpec(resourcev1alpha1.PipelineResourceTypeGit))
-	if _, err := pullrequest.NewResource("override-with-pr:latest", pr); err == nil {
+	if _, err := pullrequest.NewResource("test-resource", "override-with-pr:latest", pr); err == nil {
 		t.Error("NewPullRequestResource() want error, got nil")
 	}
 }
 
 type testcase struct {
 	in  *pullrequest.Resource
-	out []pipelinev1alpha1.Step
+	out []v1beta1.Step
 }
 
 const workspace = "/workspace"
@@ -79,7 +81,7 @@ func containerTestCases(mode string) []testcase {
 			PRImage:               "override-with-pr:latest",
 			InsecureSkipTLSVerify: false,
 		},
-		out: []pipelinev1alpha1.Step{{Container: corev1.Container{
+		out: []v1beta1.Step{{Container: corev1.Container{
 			Name:       "pr-source-nocreds-9l9zj",
 			Image:      "override-with-pr:latest",
 			WorkingDir: pipeline.WorkspaceDir,
@@ -100,7 +102,7 @@ func containerTestCases(mode string) []testcase {
 			PRImage:  "override-with-pr:latest",
 			Provider: "github",
 		},
-		out: []pipelinev1alpha1.Step{{Container: corev1.Container{
+		out: []v1beta1.Step{{Container: corev1.Container{
 			Name:       "pr-source-creds-mz4c7",
 			Image:      "override-with-pr:latest",
 			WorkingDir: pipeline.WorkspaceDir,
@@ -125,12 +127,27 @@ func containerTestCases(mode string) []testcase {
 			PRImage:               "override-with-pr:latest",
 			InsecureSkipTLSVerify: true,
 		},
-		out: []pipelinev1alpha1.Step{{Container: corev1.Container{
+		out: []v1beta1.Step{{Container: corev1.Container{
 			Name:       "pr-source-nocreds-mssqb",
 			Image:      "override-with-pr:latest",
 			WorkingDir: pipeline.WorkspaceDir,
 			Command:    []string{"/ko-app/pullrequest-init"},
 			Args:       []string{"-url", "https://example.com", "-path", workspace, "-mode", mode, "-insecure-skip-tls-verify=true"},
+			Env:        []corev1.EnvVar{},
+		}}},
+	}, {
+		in: &pullrequest.Resource{
+			Name:                      "strict-json-comments",
+			URL:                       "https://example.com",
+			PRImage:                   "override-with-pr:latest",
+			DisableStrictJSONComments: true,
+		},
+		out: []v1beta1.Step{{Container: corev1.Container{
+			Name:       "pr-source-strict-json-comments-78c5n",
+			Image:      "override-with-pr:latest",
+			WorkingDir: pipeline.WorkspaceDir,
+			Command:    []string{"/ko-app/pullrequest-init"},
+			Args:       []string{"-url", "https://example.com", "-path", workspace, "-mode", mode, "-disable-strict-json-comments=true"},
 			Env:        []corev1.EnvVar{},
 		}}},
 	}}
@@ -141,7 +158,7 @@ func TestPullRequest_GetDownloadSteps(t *testing.T) {
 
 	for _, tc := range containerTestCases("download") {
 		t.Run(tc.in.GetName(), func(t *testing.T) {
-			ts := pipelinev1alpha1.TaskSpec{}
+			ts := v1beta1.TaskSpec{}
 			got, err := tc.in.GetInputTaskModifier(&ts, workspace)
 			if err != nil {
 				t.Fatal(err)
@@ -158,7 +175,7 @@ func TestPullRequest_GetOutputSteps(t *testing.T) {
 
 	for _, tc := range containerTestCases("upload") {
 		t.Run(tc.in.GetName(), func(t *testing.T) {
-			ts := pipelinev1alpha1.TaskSpec{}
+			ts := v1beta1.TaskSpec{}
 			got, err := tc.in.GetOutputTaskModifier(&ts, workspace)
 			if err != nil {
 				t.Fatal(err)

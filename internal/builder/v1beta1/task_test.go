@@ -101,12 +101,12 @@ func TestTask(t *testing.T) {
 				Name:        "param",
 				Type:        v1beta1.ParamTypeString,
 				Description: "mydesc",
-				Default:     tb.ArrayOrString("default"),
+				Default:     v1beta1.NewArrayOrString("default"),
 			}, {
 				Name:        "array-param",
 				Type:        v1beta1.ParamTypeString,
 				Description: "desc",
-				Default:     tb.ArrayOrString("array", "values"),
+				Default:     v1beta1.NewArrayOrString("array", "values"),
 			}},
 			Resources: &v1beta1.TaskResources{
 				Inputs: []v1beta1.TaskResource{{
@@ -179,6 +179,7 @@ func TestTaskRunWithTaskRef(t *testing.T) {
 		),
 		tb.TaskRunLabels(map[string]string{"label-2": "label-value-2", "label-3": "label-value-3"}),
 		tb.TaskRunLabel("label", "label-value"),
+		tb.TaskRunAnnotations(map[string]string{"annotation-1": "annotation-value-1", "annotation-2": "annotation-value-2"}),
 		tb.TaskRunSpec(
 			tb.TaskRunTaskRef("task-output",
 				tb.TaskRefKind(v1beta1.ClusterTaskKind),
@@ -231,15 +232,18 @@ func TestTaskRunWithTaskRef(t *testing.T) {
 				"label-2": "label-value-2",
 				"label-3": "label-value-3",
 			},
-			Annotations: map[string]string{},
+			Annotations: map[string]string{
+				"annotation-1": "annotation-value-1",
+				"annotation-2": "annotation-value-2",
+			},
 		},
 		Spec: v1beta1.TaskRunSpec{
 			Params: []v1beta1.Param{{
 				Name:  "iparam",
-				Value: *tb.ArrayOrString("ivalue"),
+				Value: *v1beta1.NewArrayOrString("ivalue"),
 			}, {
 				Name:  "arrayparam",
-				Value: *tb.ArrayOrString("array", "values"),
+				Value: *v1beta1.NewArrayOrString("array", "values"),
 			}},
 			Resources: &v1beta1.TaskRunResources{
 				Inputs: []v1beta1.TaskResourceBinding{{

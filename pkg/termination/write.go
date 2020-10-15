@@ -20,16 +20,22 @@ import (
 	"io/ioutil"
 	"os"
 
-	v1alpha1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	v1beta1 "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+)
+
+const (
+	// MaxContainerTerminationMessageLength is the upper bound any one container may write to
+	// its termination message path. Contents above this length will cause a failure.
+	MaxContainerTerminationMessageLength = 1024 * 4
 )
 
 // WriteMessage writes the results to the termination message path.
-func WriteMessage(path string, pro []v1alpha1.PipelineResourceResult) error {
+func WriteMessage(path string, pro []v1beta1.PipelineResourceResult) error {
 	// if the file at path exists, concatenate the new values otherwise create it
 	// file at path already exists
 	fileContents, err := ioutil.ReadFile(path)
 	if err == nil {
-		var existingEntries []v1alpha1.PipelineResourceResult
+		var existingEntries []v1beta1.PipelineResourceResult
 		if err := json.Unmarshal([]byte(fileContents), &existingEntries); err == nil {
 			// append new entries to existing entries
 			pro = append(existingEntries, pro...)
@@ -41,6 +47,11 @@ func WriteMessage(path string, pro []v1alpha1.PipelineResourceResult) error {
 	if err != nil {
 		return err
 	}
+
+	if len(jsonOutput) > MaxContainerTerminationMessageLength {
+		return aboveMax
+	}
+
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0666)
 	if err != nil {
 		return err
@@ -54,4 +65,15 @@ func WriteMessage(path string, pro []v1alpha1.PipelineResourceResult) error {
 		return err
 	}
 	return nil
+}
+
+//MessageLengthError indicate the length of termination message of container is beyond 4096 which is the max length read by kubenates
+type MessageLengthError string
+
+const (
+	aboveMax MessageLengthError = "Termination message is above max allowed size 4096, caused by large task result."
+)
+
+func (e MessageLengthError) Error() string {
+	return string(e)
 }

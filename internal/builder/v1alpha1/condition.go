@@ -17,10 +17,9 @@ limitations under the License.
 package builder
 
 import (
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 )
 
 // ConditionOp is an operation which modifies a Condition struct.
@@ -58,6 +57,18 @@ func ConditionLabels(labels map[string]string) ConditionOp {
 		}
 		for key, value := range labels {
 			Condition.ObjectMeta.Labels[key] = value
+		}
+	}
+}
+
+// ConditionAnnotations sets the annotations on the condition.
+func ConditionAnnotations(annotations map[string]string) ConditionOp {
+	return func(Condition *v1alpha1.Condition) {
+		if Condition.ObjectMeta.Annotations == nil {
+			Condition.ObjectMeta.Annotations = map[string]string{}
+		}
+		for key, value := range annotations {
+			Condition.ObjectMeta.Annotations[key] = value
 		}
 	}
 }

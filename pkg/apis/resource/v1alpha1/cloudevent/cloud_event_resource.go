@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
+	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	resource "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 )
 
@@ -35,7 +35,7 @@ type Resource struct {
 }
 
 // NewResource creates a new CloudEvent resource to pass to a Task
-func NewResource(r *resource.PipelineResource) (*Resource, error) {
+func NewResource(name string, r *resource.PipelineResource) (*Resource, error) {
 	if r.Spec.Type != resource.PipelineResourceTypeCloudEvent {
 		return nil, fmt.Errorf("cloudevent.Resource: Cannot create a Cloud Event resource from a %s Pipeline Resource", r.Spec.Type)
 	}
@@ -55,7 +55,7 @@ func NewResource(r *resource.PipelineResource) (*Resource, error) {
 		return nil, fmt.Errorf("cloudevent.Resource: Need URI to be specified in order to create a CloudEvent resource %s", r.Name)
 	}
 	return &Resource{
-		Name:      r.Name,
+		Name:      name,
 		Type:      r.Spec.Type,
 		TargetURI: targetURI,
 	}, nil
@@ -81,11 +81,11 @@ func (s *Resource) Replacements() map[string]string {
 }
 
 // GetInputTaskModifier returns the TaskModifier to be used when this resource is an input.
-func (s *Resource) GetInputTaskModifier(_ *v1alpha1.TaskSpec, _ string) (v1alpha1.TaskModifier, error) {
-	return &v1alpha1.InternalTaskModifier{}, nil
+func (s *Resource) GetInputTaskModifier(_ *v1beta1.TaskSpec, _ string) (v1beta1.TaskModifier, error) {
+	return &v1beta1.InternalTaskModifier{}, nil
 }
 
 // GetOutputTaskModifier returns a No-op TaskModifier.
-func (s *Resource) GetOutputTaskModifier(_ *v1alpha1.TaskSpec, _ string) (v1alpha1.TaskModifier, error) {
-	return &v1alpha1.InternalTaskModifier{}, nil
+func (s *Resource) GetOutputTaskModifier(_ *v1beta1.TaskSpec, _ string) (v1beta1.TaskModifier, error) {
+	return &v1beta1.InternalTaskModifier{}, nil
 }

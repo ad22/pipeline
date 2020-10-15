@@ -30,6 +30,7 @@ import (
 	"github.com/tektoncd/pipeline/pkg/reconciler/pipeline/dag"
 	"github.com/tektoncd/pipeline/test/diff"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func testGraphv1beta1(t *testing.T) *dag.Graph {
@@ -48,11 +49,8 @@ func testGraphv1beta1(t *testing.T) *dag.Graph {
 	}, {
 		Name: "w",
 		Params: []v1beta1.Param{{
-			Name: "foo",
-			Value: v1beta1.ArrayOrString{
-				Type:      v1beta1.ParamTypeString,
-				StringVal: "$(tasks.y.results.bar)",
-			},
+			Name:  "foo",
+			Value: *v1beta1.NewArrayOrString("$(tasks.y.results.bar)"),
 		}},
 		RunAfter: []string{"b"},
 	}, {
@@ -77,69 +75,43 @@ func TestGetSchedulable_v1beta1(t *testing.T) {
 	tcs := []struct {
 		name          string
 		finished      []string
-		expectedTasks map[string]struct{}
+		expectedTasks sets.String
 	}{{
-		name:     "nothing-done",
-		finished: []string{},
-		expectedTasks: map[string]struct{}{
-			"a": {},
-			"b": {},
-		},
+		name:          "nothing-done",
+		finished:      []string{},
+		expectedTasks: sets.NewString("a", "b"),
 	}, {
-		name:     "a-done",
-		finished: []string{"a"},
-		expectedTasks: map[string]struct{}{
-			"b": {},
-			"x": {},
-		},
+		name:          "a-done",
+		finished:      []string{"a"},
+		expectedTasks: sets.NewString("b", "x"),
 	}, {
-		name:     "b-done",
-		finished: []string{"b"},
-		expectedTasks: map[string]struct{}{
-			"a": {},
-		},
+		name:          "b-done",
+		finished:      []string{"b"},
+		expectedTasks: sets.NewString("a"),
 	}, {
-		name:     "a-and-b-done",
-		finished: []string{"a", "b"},
-		expectedTasks: map[string]struct{}{
-			"x": {},
-		},
+		name:          "a-and-b-done",
+		finished:      []string{"a", "b"},
+		expectedTasks: sets.NewString("x"),
 	}, {
-		name:     "a-x-done",
-		finished: []string{"a", "x"},
-		expectedTasks: map[string]struct{}{
-			"b": {},
-			"y": {},
-			"z": {},
-		},
+		name:          "a-x-done",
+		finished:      []string{"a", "x"},
+		expectedTasks: sets.NewString("b", "y", "z"),
 	}, {
-		name:     "a-x-b-done",
-		finished: []string{"a", "x", "b"},
-		expectedTasks: map[string]struct{}{
-			"y": {},
-			"z": {},
-		},
+		name:          "a-x-b-done",
+		finished:      []string{"a", "x", "b"},
+		expectedTasks: sets.NewString("y", "z"),
 	}, {
-		name:     "a-x-y-done",
-		finished: []string{"a", "x", "y"},
-		expectedTasks: map[string]struct{}{
-			"b": {},
-			"z": {},
-		},
+		name:          "a-x-y-done",
+		finished:      []string{"a", "x", "y"},
+		expectedTasks: sets.NewString("b", "z"),
 	}, {
-		name:     "a-x-y-done",
-		finished: []string{"a", "x", "y"},
-		expectedTasks: map[string]struct{}{
-			"b": {},
-			"z": {},
-		},
+		name:          "a-x-y-done",
+		finished:      []string{"a", "x", "y"},
+		expectedTasks: sets.NewString("b", "z"),
 	}, {
-		name:     "a-x-y-b-done",
-		finished: []string{"a", "x", "y", "b"},
-		expectedTasks: map[string]struct{}{
-			"w": {},
-			"z": {},
-		},
+		name:          "a-x-y-b-done",
+		finished:      []string{"a", "x", "y", "b"},
+		expectedTasks: sets.NewString("w", "z"),
 	}}
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
@@ -547,40 +519,25 @@ func TestBuild_TaskParamsFromTaskResults_v1beta1(t *testing.T) {
 	e := v1beta1.PipelineTask{Name: "e"}
 	xDependsOnA := v1beta1.PipelineTask{
 		Name: "x",
-		Params: []v1beta1.Param{
-			{
-				Name: "paramX",
-				Value: v1beta1.ArrayOrString{
-					Type:      v1beta1.ParamTypeString,
-					StringVal: "$(tasks.a.results.resultA)",
-				},
-			},
-		},
+		Params: []v1beta1.Param{{
+			Name:  "paramX",
+			Value: *v1beta1.NewArrayOrString("$(tasks.a.results.resultA)"),
+		}},
 	}
 	yDependsOnBRunsAfterC := v1beta1.PipelineTask{
 		Name:     "y",
 		RunAfter: []string{"c"},
-		Params: []v1beta1.Param{
-			{
-				Name: "paramB",
-				Value: v1beta1.ArrayOrString{
-					Type:      v1beta1.ParamTypeString,
-					StringVal: "$(tasks.b.results.resultB)",
-				},
-			},
-		},
+		Params: []v1beta1.Param{{
+			Name:  "paramB",
+			Value: *v1beta1.NewArrayOrString("$(tasks.b.results.resultB)"),
+		}},
 	}
 	zDependsOnDAndE := v1beta1.PipelineTask{
 		Name: "z",
-		Params: []v1beta1.Param{
-			{
-				Name: "paramZ",
-				Value: v1beta1.ArrayOrString{
-					Type:      v1beta1.ParamTypeString,
-					StringVal: "$(tasks.d.results.resultD) $(tasks.e.results.resultE)",
-				},
-			},
-		},
+		Params: []v1beta1.Param{{
+			Name:  "paramZ",
+			Value: *v1beta1.NewArrayOrString("$(tasks.d.results.resultD) $(tasks.e.results.resultE)"),
+		}},
 	}
 
 	//   a  b   c  d   e
@@ -635,17 +592,11 @@ func TestBuild_ConditionsParamsFromTaskResults_v1beta1(t *testing.T) {
 		Name: "x",
 		Conditions: []v1beta1.PipelineTaskCondition{{
 			ConditionRef: "cond",
-			Params: []v1beta1.Param{
-				{
-					Name: "paramX",
-					Value: v1beta1.ArrayOrString{
-						Type:      v1beta1.ParamTypeString,
-						StringVal: "$(tasks.a.results.resultA)",
-					},
-				},
-			},
-		},
-		},
+			Params: []v1beta1.Param{{
+				Name:  "paramX",
+				Value: *v1beta1.NewArrayOrString("$(tasks.a.results.resultA)"),
+			}},
+		}},
 	}
 
 	//   a

@@ -1,4 +1,4 @@
-// Copyright 2018, OpenCensus Authors
+// Copyright 2020, OpenCensus Authors
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,8 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 	"time"
+	"unsafe"
 
 	"google.golang.org/api/support/bundler"
 	"google.golang.org/grpc"
@@ -52,12 +54,12 @@ var _ trace.Exporter = (*Exporter)(nil)
 var _ view.Exporter = (*Exporter)(nil)
 
 type Exporter struct {
-	connectionState int32
-
 	// mu protects the non-atomic and non-channel variables
 	mu sync.RWMutex
-	// senderMu protects the concurrent unsafe traceExporter client
-	senderMu           sync.RWMutex
+	// senderMu protects the concurrent unsafe send on traceExporter client
+	senderMu sync.Mutex
+	// recvMu protects the concurrent unsafe recv on traceExporter client
+	recvMu             sync.Mutex
 	started            bool
 	stopped            bool
 	agentAddress       string
@@ -68,9 +70,12 @@ type Exporter struct {
 	nodeInfo           *commonpb.Node
 	grpcClientConn     *grpc.ClientConn
 	reconnectionPeriod time.Duration
+	resourceDetector   resource.Detector
 	resource           *resourcepb.Resource
 	compressor         string
 	headers            map[string]string
+	lastConnectErrPtr  unsafe.Pointer
+	metricNamePerfix   string
 
 	startOnce      sync.Once
 	stopCh         chan bool
@@ -85,7 +90,15 @@ type Exporter struct {
 	// Please do not confuse it with metricsBundler!
 	viewDataBundler *bundler.Bundler
 
+	// Bundler configuration options managed by viewDataBundler
+	viewDataDelay       time.Duration
+	viewDataBundleCount int
+
 	clientTransportCredentials credentials.TransportCredentials
+
+	grpcDialOptions []grpc.DialOption
+
+	spanConfig SpanConfig
 }
 
 func NewExporter(opts ...ExporterOption) (*Exporter, error) {
@@ -103,6 +116,8 @@ const spanDataBufferSize = 300
 
 func NewUnstartedExporter(opts ...ExporterOption) (*Exporter, error) {
 	e := new(Exporter)
+	e.viewDataDelay = 2 * time.Second
+	e.viewDataBundleCount = 500
 	for _, opt := range opts {
 		opt.withExporter(e)
 	}
@@ -116,11 +131,21 @@ func NewUnstartedExporter(opts ...ExporterOption) (*Exporter, error) {
 	viewDataBundler := bundler.NewBundler((*view.Data)(nil), func(bundle interface{}) {
 		e.uploadViewData(bundle.([]*view.Data))
 	})
-	viewDataBundler.DelayThreshold = 2 * time.Second
-	viewDataBundler.BundleCountThreshold = 500 // TODO: (@odeke-em) make this configurable.
+	viewDataBundler.DelayThreshold = e.viewDataDelay
+	viewDataBundler.BundleCountThreshold = e.viewDataBundleCount
 	e.viewDataBundler = viewDataBundler
 	e.nodeInfo = NodeWithStartTime(e.serviceName)
-	e.resource = resourceProtoFromEnv()
+	if e.resourceDetector != nil {
+		res, err := e.resourceDetector(context.Background())
+		if err != nil {
+			panic(fmt.Sprintf("Error detecting resource. err:%v\n", err))
+		}
+		if res != nil {
+			e.resource = resourceToResourcePb(res)
+		}
+	} else {
+		e.resource = resourceProtoFromEnv()
+	}
 
 	return e, nil
 }
@@ -134,7 +159,6 @@ var (
 	errAlreadyStarted = errors.New("already started")
 	errNotStarted     = errors.New("not started")
 	errStopped        = errors.New("stopped")
-	errNoConnection   = errors.New("no active connection")
 )
 
 // Start dials to the agent, establishing a connection to it. It also
@@ -146,14 +170,20 @@ func (ae *Exporter) Start() error {
 	var err = errAlreadyStarted
 	ae.startOnce.Do(func() {
 		ae.mu.Lock()
-		defer ae.mu.Unlock()
-
 		ae.started = true
 		ae.disconnectedCh = make(chan bool, 1)
 		ae.stopCh = make(chan bool)
 		ae.backgroundConnectionDoneCh = make(chan bool)
+		ae.mu.Unlock()
 
-		ae.setStateDisconnected()
+		// An optimistic first connection attempt to ensure that
+		// applications under heavy load can immediately process
+		// data. See https://github.com/census-ecosystem/opencensus-go-exporter-ocagent/pull/63
+		if err := ae.connect(); err == nil {
+			ae.setStateConnected()
+		} else {
+			ae.setStateDisconnected(err)
+		}
 		go ae.indefiniteBackgroundConnection()
 
 		err = nil
@@ -270,6 +300,9 @@ func (ae *Exporter) dialToAgent() (*grpc.ClientConn, error) {
 		dialOpts = append(dialOpts, grpc.WithDefaultCallOptions(grpc.UseCompressor(ae.compressor)))
 	}
 	dialOpts = append(dialOpts, grpc.WithStatsHandler(&ocgrpc.ClientHandler{}))
+	if len(ae.grpcDialOptions) != 0 {
+		dialOpts = append(dialOpts, ae.grpcDialOptions...)
+	}
 
 	ctx := context.Background()
 	if len(ae.headers) > 0 {
@@ -368,16 +401,33 @@ func (ae *Exporter) ExportTraceServiceRequest(batch *agenttracepb.ExportTraceSer
 		return errStopped
 
 	default:
-		if !ae.connected() {
-			return errNoConnection
+		if lastConnectErr := ae.lastConnectError(); lastConnectErr != nil {
+			return fmt.Errorf("ExportTraceServiceRequest: no active connection, last connection error: %v", lastConnectErr)
 		}
 
 		ae.senderMu.Lock()
 		err := ae.traceExporter.Send(batch)
 		ae.senderMu.Unlock()
 		if err != nil {
-			ae.setStateDisconnected()
-			return err
+			if err == io.EOF {
+				ae.recvMu.Lock()
+				// Perform a .Recv to try to find out why the RPC actually ended.
+				// See:
+				//   * https://github.com/grpc/grpc-go/blob/d389f9fac68eea0dcc49957d0b4cca5b3a0a7171/stream.go#L98-L100
+				//   * https://groups.google.com/forum/#!msg/grpc-io/XcN4hA9HonI/F_UDiejTAwAJ
+				for {
+					_, err = ae.traceExporter.Recv()
+					if err != nil {
+						break
+					}
+				}
+				ae.recvMu.Unlock()
+			}
+
+			ae.setStateDisconnected(err)
+			if err != io.EOF {
+				return err
+			}
 		}
 		return nil
 	}
@@ -390,14 +440,57 @@ func (ae *Exporter) ExportView(vd *view.Data) {
 	_ = ae.viewDataBundler.Add(vd, 1)
 }
 
-func ocSpanDataToPbSpans(sdl []*trace.SpanData) []*tracepb.Span {
+// ExportMetricsServiceRequest sends proto metrics with the metrics service client.
+func (ae *Exporter) ExportMetricsServiceRequest(batch *agentmetricspb.ExportMetricsServiceRequest) error {
+	if batch == nil || len(batch.Metrics) == 0 {
+		return nil
+	}
+
+	select {
+	case <-ae.stopCh:
+		return errStopped
+
+	default:
+		if lastConnectErr := ae.lastConnectError(); lastConnectErr != nil {
+			return fmt.Errorf("ExportMetricsServiceRequest: no active connection, last connection error: %v", lastConnectErr)
+		}
+
+		ae.senderMu.Lock()
+		err := ae.metricsExporter.Send(batch)
+		ae.senderMu.Unlock()
+		if err != nil {
+			if err == io.EOF {
+				ae.recvMu.Lock()
+				// Perform a .Recv to try to find out why the RPC actually ended.
+				// See:
+				//   * https://github.com/grpc/grpc-go/blob/d389f9fac68eea0dcc49957d0b4cca5b3a0a7171/stream.go#L98-L100
+				//   * https://groups.google.com/forum/#!msg/grpc-io/XcN4hA9HonI/F_UDiejTAwAJ
+				for {
+					_, err = ae.metricsExporter.Recv()
+					if err != nil {
+						break
+					}
+				}
+				ae.recvMu.Unlock()
+			}
+
+			ae.setStateDisconnected(err)
+			if err != io.EOF {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func ocSpanDataToPbSpans(sdl []*trace.SpanData, spanConfig SpanConfig) []*tracepb.Span {
 	if len(sdl) == 0 {
 		return nil
 	}
 	protoSpans := make([]*tracepb.Span, 0, len(sdl))
 	for _, sd := range sdl {
 		if sd != nil {
-			protoSpans = append(protoSpans, ocSpanToProtoSpan(sd))
+			protoSpans = append(protoSpans, ocSpanToProtoSpan(sd, spanConfig))
 		}
 	}
 	return protoSpans
@@ -413,29 +506,30 @@ func (ae *Exporter) uploadTraces(sdl []*trace.SpanData) {
 			return
 		}
 
-		protoSpans := ocSpanDataToPbSpans(sdl)
+		protoSpans := ocSpanDataToPbSpans(sdl, ae.spanConfig)
 		if len(protoSpans) == 0 {
 			return
 		}
 		ae.senderMu.Lock()
 		err := ae.traceExporter.Send(&agenttracepb.ExportTraceServiceRequest{
-			Spans: protoSpans,
+			Spans:    protoSpans,
+			Resource: ae.resource,
 		})
 		ae.senderMu.Unlock()
 		if err != nil {
-			ae.setStateDisconnected()
+			ae.setStateDisconnected(err)
 		}
 	}
 }
 
-func ocViewDataToPbMetrics(vdl []*view.Data) []*metricspb.Metric {
+func ocViewDataToPbMetrics(vdl []*view.Data, metricNamePrefix string) []*metricspb.Metric {
 	if len(vdl) == 0 {
 		return nil
 	}
 	metrics := make([]*metricspb.Metric, 0, len(vdl))
 	for _, vd := range vdl {
 		if vd != nil {
-			vmetric, err := viewDataToMetric(vd)
+			vmetric, err := viewDataToMetric(vd, metricNamePrefix)
 			// TODO: (@odeke-em) somehow report this error, if it is non-nil.
 			if err == nil && vmetric != nil {
 				metrics = append(metrics, vmetric)
@@ -446,30 +540,18 @@ func ocViewDataToPbMetrics(vdl []*view.Data) []*metricspb.Metric {
 }
 
 func (ae *Exporter) uploadViewData(vdl []*view.Data) {
-	select {
-	case <-ae.stopCh:
+	protoMetrics := ocViewDataToPbMetrics(vdl, ae.metricNamePerfix)
+	if len(protoMetrics) == 0 {
 		return
-
-	default:
-		if !ae.connected() {
-			return
-		}
-
-		protoMetrics := ocViewDataToPbMetrics(vdl)
-		if len(protoMetrics) == 0 {
-			return
-		}
-		err := ae.metricsExporter.Send(&agentmetricspb.ExportMetricsServiceRequest{
-			Metrics: protoMetrics,
-			// TODO:(@odeke-em)
-			// a) Figure out how to derive a Node from the environment
-			// b) Figure out how to derive a Resource from the environment
-			// or better letting users of the exporter configure it.
-		})
-		if err != nil {
-			ae.setStateDisconnected()
-		}
 	}
+	req := &agentmetricspb.ExportMetricsServiceRequest{
+		Metrics:  protoMetrics,
+		Resource: ae.resource,
+		// TODO:(@odeke-em)
+		// a) Figure out how to derive a Node from the environment
+		// or better letting users of the exporter configure it.
+	}
+	ae.ExportMetricsServiceRequest(req)
 }
 
 func (ae *Exporter) Flush() {
@@ -482,7 +564,10 @@ func resourceProtoFromEnv() *resourcepb.Resource {
 	if rs == nil {
 		return nil
 	}
+	return resourceToResourcePb(rs)
+}
 
+func resourceToResourcePb(rs *resource.Resource) *resourcepb.Resource {
 	rprs := &resourcepb.Resource{
 		Type: rs.Type,
 	}

@@ -18,11 +18,15 @@ package main
 
 import (
 	"flag"
+	"log"
 
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline"
 	"github.com/tektoncd/pipeline/pkg/reconciler/pipelinerun"
 	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun"
+	"github.com/tektoncd/pipeline/pkg/version"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/rest"
+	"knative.dev/pkg/controller"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/injection/sharedmain"
 	"knative.dev/pkg/signals"
@@ -34,29 +38,29 @@ const (
 )
 
 var (
-	entrypointImage = flag.String("entrypoint-image", "override-with-entrypoint:latest",
-		"The container image containing our entrypoint binary.")
-	nopImage = flag.String("nop-image", "tianon/true", "The container image used to stop sidecars")
-	gitImage = flag.String("git-image", "override-with-git:latest",
-		"The container image containing our Git binary.")
-	credsImage = flag.String("creds-image", "override-with-creds:latest",
-		"The container image for preparing our Build's credentials.")
-	kubeconfigWriterImage = flag.String("kubeconfig-writer-image", "override-with-kubeconfig-writer:latest",
-		"The container image containing our kubeconfig writer binary.")
-	shellImage  = flag.String("shell-image", "busybox", "The container image containing a shell")
-	gsutilImage = flag.String("gsutil-image", "google/cloud-sdk",
-		"The container image containing gsutil")
-	buildGCSFetcherImage = flag.String("build-gcs-fetcher-image", "gcr.io/cloud-builders/gcs-fetcher:latest",
-		"The container image containing our GCS fetcher binary.")
-	prImage = flag.String("pr-image", "override-with-pr:latest",
-		"The container image containing our PR binary.")
-	imageDigestExporterImage = flag.String("imagedigest-exporter-image", "override-with-imagedigest-exporter-image:latest",
-		"The container image containing our image digest exporter binary.")
-	namespace = flag.String("namespace", corev1.NamespaceAll, "Namespace to restrict informer to. Optional, defaults to all namespaces.")
+	entrypointImage          = flag.String("entrypoint-image", "", "The container image containing our entrypoint binary.")
+	nopImage                 = flag.String("nop-image", "", "The container image used to stop sidecars")
+	gitImage                 = flag.String("git-image", "", "The container image containing our Git binary.")
+	credsImage               = flag.String("creds-image", "", "The container image for preparing our Build's credentials.")
+	kubeconfigWriterImage    = flag.String("kubeconfig-writer-image", "", "The container image containing our kubeconfig writer binary.")
+	shellImage               = flag.String("shell-image", "", "The container image containing a shell")
+	gsutilImage              = flag.String("gsutil-image", "", "The container image containing gsutil")
+	buildGCSFetcherImage     = flag.String("build-gcs-fetcher-image", "", "The container image containing our GCS fetcher binary.")
+	prImage                  = flag.String("pr-image", "", "The container image containing our PR binary.")
+	imageDigestExporterImage = flag.String("imagedigest-exporter-image", "", "The container image containing our image digest exporter binary.")
+	namespace                = flag.String("namespace", corev1.NamespaceAll, "Namespace to restrict informer to. Optional, defaults to all namespaces.")
+	versionGiven             = flag.String("version", "devel", "Version of Tekton running")
+	qps                      = flag.Int("kube-api-qps", int(rest.DefaultQPS), "Maximum QPS to the master from this client")
+	burst                    = flag.Int("kube-api-burst", rest.DefaultBurst, "Maximum burst for throttle")
+	threadsPerController     = flag.Int("threads-per-controller", controller.DefaultThreadsPerController, "Threads (goroutines) to create per controller")
+	disableHighAvailability  = flag.Bool("disable-ha", false, "Whether to disable high-availability functionality for this component.  This flag will be deprecated "+
+		"and removed when we have promoted this feature to stable, so do not pass it without filing an "+
+		"issue upstream!")
 )
 
 func main() {
 	flag.Parse()
+	version.SetVersion(*versionGiven)
 	images := pipeline.Images{
 		EntrypointImage:          *entrypointImage,
 		NopImage:                 *nopImage,
@@ -69,8 +73,22 @@ func main() {
 		PRImage:                  *prImage,
 		ImageDigestExporterImage: *imageDigestExporterImage,
 	}
-	sharedmain.MainWithContext(injection.WithNamespaceScope(signals.NewContext(), *namespace), ControllerLogKey,
-		taskrun.NewController(images),
-		pipelinerun.NewController(images),
+	if err := images.Validate(); err != nil {
+		log.Fatal(err)
+	}
+	controller.DefaultThreadsPerController = *threadsPerController
+
+	cfg := sharedmain.ParseAndGetConfigOrDie()
+	// multiply by 2, no of controllers being created
+	cfg.QPS = 2 * float32(*qps)
+	cfg.Burst = 2 * *burst
+
+	ctx := injection.WithNamespaceScope(signals.NewContext(), *namespace)
+	if *disableHighAvailability {
+		ctx = sharedmain.WithHADisabled(ctx)
+	}
+	sharedmain.MainWithConfig(ctx, ControllerLogKey, cfg,
+		taskrun.NewController(*namespace, images),
+		pipelinerun.NewController(*namespace, images),
 	)
 }

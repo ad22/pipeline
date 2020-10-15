@@ -69,13 +69,15 @@ func (i *image) compute() error {
 	digestMap := make(map[v1.Hash]v1.Layer)
 
 	for _, add := range i.adds {
-		diffID, err := add.Layer.DiffID()
-		if err != nil {
-			return err
-		}
-		diffIDs = append(diffIDs, diffID)
 		history = append(history, add.History)
-		diffIDMap[diffID] = add.Layer
+		if add.Layer != nil {
+			diffID, err := add.Layer.DiffID()
+			if err != nil {
+				return err
+			}
+			diffIDs = append(diffIDs, diffID)
+			diffIDMap[diffID] = add.Layer
+		}
 	}
 
 	m, err := i.base.Manifest()
@@ -85,6 +87,11 @@ func (i *image) compute() error {
 	manifest := m.DeepCopy()
 	manifestLayers := manifest.Layers
 	for _, add := range i.adds {
+		if add.Layer == nil {
+			// Empty layers include only history in manifest.
+			continue
+		}
+
 		desc, err := partial.Descriptor(add.Layer)
 		if err != nil {
 			return err
@@ -96,6 +103,10 @@ func (i *image) compute() error {
 		}
 		if len(add.URLs) != 0 {
 			desc.URLs = add.URLs
+		}
+
+		if add.MediaType != "" {
+			desc.MediaType = add.MediaType
 		}
 
 		manifestLayers = append(manifestLayers, *desc)
@@ -120,8 +131,12 @@ func (i *image) compute() error {
 
 	// With OCI media types, this should not be set, see discussion:
 	// https://github.com/opencontainers/image-spec/pull/795
-	if i.mediaType != nil && strings.Contains(string(*i.mediaType), types.OCIVendorPrefix) {
-		manifest.MediaType = ""
+	if i.mediaType != nil {
+		if strings.Contains(string(*i.mediaType), types.OCIVendorPrefix) {
+			manifest.MediaType = ""
+		} else if strings.Contains(string(*i.mediaType), types.DockerVendorPrefix) {
+			manifest.MediaType = *i.mediaType
+		}
 	}
 
 	i.configFile = configFile
@@ -247,7 +262,7 @@ func (i *image) LayerByDiffID(h v1.Hash) (v1.Layer, error) {
 
 func validate(adds []Addendum) error {
 	for _, add := range adds {
-		if add.Layer == nil {
+		if add.Layer == nil && !add.History.EmptyLayer {
 			return errors.New("unable to add a nil layer to the image")
 		}
 	}

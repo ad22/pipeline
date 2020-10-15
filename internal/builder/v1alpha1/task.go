@@ -22,7 +22,6 @@ import (
 	"github.com/tektoncd/pipeline/pkg/apis/config"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
-	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun/resources"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/pkg/apis"
@@ -75,9 +74,6 @@ type TaskRunInputsOp func(*v1alpha1.TaskRunInputs)
 
 // TaskRunOutputsOp is an operation which modify a TaskRunOutputs struct.
 type TaskRunOutputsOp func(*v1alpha1.TaskRunOutputs)
-
-// ResolvedTaskResourcesOp is an operation which modify a ResolvedTaskResources struct.
-type ResolvedTaskResourcesOp func(*resources.ResolvedTaskResources)
 
 // StepStateOp is an operation which modifies a StepState struct.
 type StepStateOp func(*v1alpha1.StepState)
@@ -317,19 +313,6 @@ func TaskResourcesOutput(name string, resourceType v1alpha1.PipelineResourceType
 	}
 }
 
-// TaskResultsOutput adds a TaskResult as Outputs to the TaskResources
-func TaskResultsOutput(name, desc string, ops ...TaskResultOp) TaskResultOp {
-	return func(result *v1beta1.TaskResult) {
-		r := &v1beta1.TaskResult{
-			Name:        name,
-			Description: desc,
-		}
-		for _, op := range ops {
-			op(r)
-		}
-	}
-}
-
 // TaskInputs sets inputs to the TaskSpec.
 // Any number of Inputs modifier can be passed to transform it.
 func TaskInputs(ops ...InputsOp) TaskSpecOp {
@@ -555,36 +538,6 @@ func TaskRunNodeSelector(values map[string]string) TaskRunSpecOp {
 	}
 }
 
-// TaskRunTolerations sets the Tolerations to the TaskRunSpec.
-func TaskRunTolerations(values []corev1.Toleration) TaskRunSpecOp {
-	return func(spec *v1alpha1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1alpha1.PodTemplate{}
-		}
-		spec.PodTemplate.Tolerations = values
-	}
-}
-
-// TaskRunAffinity sets the Affinity to the TaskRunSpec.
-func TaskRunAffinity(affinity *corev1.Affinity) TaskRunSpecOp {
-	return func(spec *v1alpha1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1alpha1.PodTemplate{}
-		}
-		spec.PodTemplate.Affinity = affinity
-	}
-}
-
-// TaskRunPodSecurityContext sets the SecurityContext to the TaskRunSpec (through PodTemplate).
-func TaskRunPodSecurityContext(context *corev1.PodSecurityContext) TaskRunSpecOp {
-	return func(spec *v1alpha1.TaskRunSpec) {
-		if spec.PodTemplate == nil {
-			spec.PodTemplate = &v1alpha1.PodTemplate{}
-		}
-		spec.PodTemplate.SecurityContext = context
-	}
-}
-
 // StateTerminated sets Terminated to the StepState.
 func StateTerminated(exitcode int) StepStateOp {
 	return func(s *v1alpha1.StepState) {
@@ -654,6 +607,18 @@ func TaskRunLabel(key, value string) TaskRunOp {
 			tr.ObjectMeta.Labels = map[string]string{}
 		}
 		tr.ObjectMeta.Labels[key] = value
+	}
+}
+
+// TaskRunAnnotations adds the specified annotations to the TaskRun.
+func TaskRunAnnotations(annotations map[string]string) TaskRunOp {
+	return func(tr *v1alpha1.TaskRun) {
+		if tr.ObjectMeta.Annotations == nil {
+			tr.ObjectMeta.Annotations = map[string]string{}
+		}
+		for key, value := range annotations {
+			tr.ObjectMeta.Annotations[key] = value
+		}
 	}
 }
 
@@ -749,11 +714,10 @@ func TaskRunServiceAccountName(sa string) TaskRunSpecOp {
 
 // TaskRunParam sets the Params to the TaskSpec
 func TaskRunParam(name, value string, additionalValues ...string) TaskRunSpecOp {
-	arrayOrString := ArrayOrString(value, additionalValues...)
 	return func(spec *v1alpha1.TaskRunSpec) {
 		spec.Params = append(spec.Params, v1alpha1.Param{
 			Name:  name,
-			Value: *arrayOrString,
+			Value: *v1beta1.NewArrayOrString(value, additionalValues...),
 		})
 	}
 }
@@ -809,17 +773,6 @@ func TaskRunInputs(ops ...TaskRunInputsOp) TaskRunSpecOp {
 		for _, op := range ops {
 			op(spec.Inputs)
 		}
-	}
-}
-
-// TaskRunInputsParam add a param, with specified name and value, to the TaskRunInputs.
-func TaskRunInputsParam(name, value string, additionalValues ...string) TaskRunInputsOp {
-	arrayOrString := ArrayOrString(value, additionalValues...)
-	return func(i *v1alpha1.TaskRunInputs) {
-		i.Params = append(i.Params, v1alpha1.Param{
-			Name:  name,
-			Value: *arrayOrString,
-		})
 	}
 }
 
@@ -930,47 +883,5 @@ func TaskRunWorkspaceVolumeClaimTemplate(name, subPath string, volumeClaimTempla
 			SubPath:             subPath,
 			VolumeClaimTemplate: volumeClaimTemplate,
 		})
-	}
-}
-
-// ResolvedTaskResources creates a ResolvedTaskResources with default values.
-// Any number of ResolvedTaskResources modifier can be passed to transform it.
-func ResolvedTaskResources(ops ...ResolvedTaskResourcesOp) *resources.ResolvedTaskResources {
-	resources := &resources.ResolvedTaskResources{}
-	for _, op := range ops {
-		op(resources)
-	}
-	return resources
-}
-
-// ResolvedTaskResourcesTaskSpec sets a TaskSpec to the ResolvedTaskResources.
-// Any number of TaskSpec modifier can be passed to transform it.
-func ResolvedTaskResourcesTaskSpec(ops ...TaskSpecOp) ResolvedTaskResourcesOp {
-	return func(r *resources.ResolvedTaskResources) {
-		spec := &v1alpha1.TaskSpec{}
-		for _, op := range ops {
-			op(spec)
-		}
-		r.TaskSpec = spec
-	}
-}
-
-// ResolvedTaskResourcesInputs adds an input PipelineResource, with specified name, to the ResolvedTaskResources.
-func ResolvedTaskResourcesInputs(name string, resource *v1alpha1.PipelineResource) ResolvedTaskResourcesOp {
-	return func(r *resources.ResolvedTaskResources) {
-		if r.Inputs == nil {
-			r.Inputs = map[string]*v1alpha1.PipelineResource{}
-		}
-		r.Inputs[name] = resource
-	}
-}
-
-// ResolvedTaskResourcesOutputs adds an output PipelineResource, with specified name, to the ResolvedTaskResources.
-func ResolvedTaskResourcesOutputs(name string, resource *v1alpha1.PipelineResource) ResolvedTaskResourcesOp {
-	return func(r *resources.ResolvedTaskResources) {
-		if r.Outputs == nil {
-			r.Outputs = map[string]*v1alpha1.PipelineResource{}
-		}
-		r.Outputs[name] = resource
 	}
 }

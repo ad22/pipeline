@@ -19,9 +19,10 @@ limitations under the License.
 package test
 
 import (
+	"context"
 	"testing"
 
-	tb "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
+	tb "github.com/tektoncd/pipeline/internal/builder/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	resources "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
@@ -31,45 +32,49 @@ import (
 )
 
 func TestClusterResource(t *testing.T) {
+	ctx := context.Background()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	secretName := "hw-secret"
 	configName := "hw-config"
 	resourceName := "helloworld-cluster"
 	taskName := "helloworld-cluster-task"
 	taskRunName := "helloworld-cluster-taskrun"
 
-	c, namespace := setup(t)
+	c, namespace := setup(ctx, t)
 	t.Parallel()
 
-	knativetest.CleanupOnInterrupt(func() { tearDown(t, c, namespace) }, t.Logf)
-	defer tearDown(t, c, namespace)
+	knativetest.CleanupOnInterrupt(func() { tearDown(ctx, t, c, namespace) }, t.Logf)
+	defer tearDown(ctx, t, c, namespace)
 
 	t.Logf("Creating secret %s", secretName)
-	if _, err := c.KubeClient.Kube.CoreV1().Secrets(namespace).Create(getClusterResourceTaskSecret(namespace, secretName)); err != nil {
+	if _, err := c.KubeClient.Kube.CoreV1().Secrets(namespace).Create(ctx, getClusterResourceTaskSecret(namespace, secretName), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Secret `%s`: %s", secretName, err)
 	}
 
 	t.Logf("Creating configMap %s", configName)
-	if _, err := c.KubeClient.Kube.CoreV1().ConfigMaps(namespace).Create(getClusterConfigMap(namespace, configName)); err != nil {
+	if _, err := c.KubeClient.Kube.CoreV1().ConfigMaps(namespace).Create(ctx, getClusterConfigMap(namespace, configName), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create configMap `%s`: %s", configName, err)
 	}
 
 	t.Logf("Creating cluster PipelineResource %s", resourceName)
-	if _, err := c.PipelineResourceClient.Create(getClusterResource(resourceName, secretName)); err != nil {
+	if _, err := c.PipelineResourceClient.Create(ctx, getClusterResource(resourceName, secretName), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create cluster Pipeline Resource `%s`: %s", resourceName, err)
 	}
 
 	t.Logf("Creating Task %s", taskName)
-	if _, err := c.TaskClient.Create(getClusterResourceTask(namespace, taskName, configName)); err != nil {
+	if _, err := c.TaskClient.Create(ctx, getClusterResourceTask(namespace, taskName, configName), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Task `%s`: %s", taskName, err)
 	}
 
 	t.Logf("Creating TaskRun %s", taskRunName)
-	if _, err := c.TaskRunClient.Create(getClusterResourceTaskRun(namespace, taskRunName, taskName, resourceName)); err != nil {
+	if _, err := c.TaskRunClient.Create(ctx, getClusterResourceTaskRun(namespace, taskRunName, taskName, resourceName), metav1.CreateOptions{}); err != nil {
 		t.Fatalf("Failed to create Taskrun `%s`: %s", taskRunName, err)
 	}
 
 	// Verify status of TaskRun (wait for it)
-	if err := WaitForTaskRunState(c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunCompleted"); err != nil {
+	if err := WaitForTaskRunState(ctx, c, taskRunName, TaskRunSucceed(taskRunName), "TaskRunCompleted"); err != nil {
 		t.Errorf("Error waiting for TaskRun %s to finish: %s", taskRunName, err)
 	}
 }
@@ -123,7 +128,7 @@ func getClusterResourceTask(namespace, name, configName string) *v1beta1.Task {
 				Name:    "check-file-existence",
 				Image:   "ubuntu",
 				Command: []string{"cat"},
-				Args:    []string{"/workspace/helloworld-cluster/kubeconfig"},
+				Args:    []string{"$(resources.inputs.target-cluster.path)/kubeconfig"},
 			}}, {Container: corev1.Container{
 				Name:    "check-config-data",
 				Image:   "ubuntu",
@@ -137,12 +142,13 @@ func getClusterResourceTask(namespace, name, configName string) *v1beta1.Task {
 				Name:    "check-contents",
 				Image:   "ubuntu",
 				Command: []string{"bash"},
-				Args:    []string{"-c", "cmp -b /workspace/helloworld-cluster/kubeconfig /config/test.data"},
+				Args:    []string{"-c", "cmp -b $(resources.inputs.target-cluster.path)/kubeconfig /config/test.data"},
 				VolumeMounts: []corev1.VolumeMount{{
 					Name:      "config-vol",
 					MountPath: "/config",
 				}},
-			}}},
+			}},
+			},
 		},
 	}
 }
@@ -176,13 +182,13 @@ clusters:
 - cluster:
     certificate-authority-data: WTJFdFkyVnlkQW89
     server: https://1.1.1.1
-  name: helloworld-cluster
+  name: target-cluster
 contexts:
 - context:
-    cluster: helloworld-cluster
+    cluster: target-cluster
     user: test-user
-  name: helloworld-cluster
-current-context: helloworld-cluster
+  name: target-cluster
+current-context: target-cluster
 kind: Config
 preferences: {}
 users:

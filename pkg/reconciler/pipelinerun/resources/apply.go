@@ -19,12 +19,11 @@ package resources
 import (
 	"fmt"
 
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 )
 
 // ApplyParameters applies the params from a PipelineRun.Params to a PipelineSpec.
-func ApplyParameters(p *v1alpha1.PipelineSpec, pr *v1alpha1.PipelineRun) *v1alpha1.PipelineSpec {
+func ApplyParameters(p *v1beta1.PipelineSpec, pr *v1beta1.PipelineRun) *v1beta1.PipelineSpec {
 	// This assumes that the PipelineRun inputs have been validated against what the Pipeline requests.
 
 	// stringReplacements is used for standard single-string stringReplacements, while arrayReplacements contains arrays
@@ -35,7 +34,7 @@ func ApplyParameters(p *v1alpha1.PipelineSpec, pr *v1alpha1.PipelineRun) *v1alph
 	// Set all the default stringReplacements
 	for _, p := range p.Params {
 		if p.Default != nil {
-			if p.Default.Type == v1alpha1.ParamTypeString {
+			if p.Default.Type == v1beta1.ParamTypeString {
 				stringReplacements[fmt.Sprintf("params.%s", p.Name)] = p.Default.StringVal
 			} else {
 				arrayReplacements[fmt.Sprintf("params.%s", p.Name)] = p.Default.ArrayVal
@@ -44,7 +43,7 @@ func ApplyParameters(p *v1alpha1.PipelineSpec, pr *v1alpha1.PipelineRun) *v1alph
 	}
 	// Set and overwrite params with the ones from the PipelineRun
 	for _, p := range pr.Spec.Params {
-		if p.Value.Type == v1alpha1.ParamTypeString {
+		if p.Value.Type == v1beta1.ParamTypeString {
 			stringReplacements[fmt.Sprintf("params.%s", p.Name)] = p.Value.StringVal
 		} else {
 			arrayReplacements[fmt.Sprintf("params.%s", p.Name)] = p.Value.ArrayVal
@@ -54,15 +53,21 @@ func ApplyParameters(p *v1alpha1.PipelineSpec, pr *v1alpha1.PipelineRun) *v1alph
 	return ApplyReplacements(p, stringReplacements, arrayReplacements)
 }
 
-// ApplyTaskResults applies the ResolvedResultRef to each PipelineTask.Params in targets
-func ApplyTaskResults(targets PipelineRunState, resolvedResultRefs ResolvedResultRefs) {
-	stringReplacements := map[string]string{}
-
-	for _, resolvedResultRef := range resolvedResultRefs {
-		replaceTarget := fmt.Sprintf("%s.%s.%s.%s", v1beta1.ResultTaskPart, resolvedResultRef.ResultReference.PipelineTask, v1beta1.ResultResultPart, resolvedResultRef.ResultReference.Result)
-		stringReplacements[replaceTarget] = resolvedResultRef.Value.StringVal
+// ApplyContexts applies the substitution from $(context.(pipelineRun|pipeline).*) with the specified values.
+// Currently supports only name substitution. Uses "" as a default if name is not specified.
+func ApplyContexts(spec *v1beta1.PipelineSpec, pipelineName string, pr *v1beta1.PipelineRun) *v1beta1.PipelineSpec {
+	replacements := map[string]string{
+		"context.pipelineRun.name":      pr.Name,
+		"context.pipeline.name":         pipelineName,
+		"context.pipelineRun.namespace": pr.Namespace,
+		"context.pipelineRun.uid":       string(pr.ObjectMeta.UID),
 	}
+	return ApplyReplacements(spec, replacements, map[string][]string{})
+}
 
+// ApplyTaskResults applies the ResolvedResultRef to each PipelineTask.Params and Pipeline.WhenExpressions in targets
+func ApplyTaskResults(targets PipelineRunState, resolvedResultRefs ResolvedResultRefs) {
+	stringReplacements := resolvedResultRefs.getStringReplacements()
 	for _, resolvedPipelineRunTask := range targets {
 		// also make substitution for resolved condition checks
 		for _, resolvedConditionCheck := range resolvedPipelineRunTask.ResolvedConditionChecks {
@@ -73,29 +78,47 @@ func ApplyTaskResults(targets PipelineRunState, resolvedResultRefs ResolvedResul
 		if resolvedPipelineRunTask.PipelineTask != nil {
 			pipelineTask := resolvedPipelineRunTask.PipelineTask.DeepCopy()
 			pipelineTask.Params = replaceParamValues(pipelineTask.Params, stringReplacements, nil)
+			pipelineTask.WhenExpressions = pipelineTask.WhenExpressions.ReplaceWhenExpressionsVariables(stringReplacements)
 			resolvedPipelineRunTask.PipelineTask = pipelineTask
 		}
 	}
 }
 
+func ApplyWorkspaces(p *v1beta1.PipelineSpec, pr *v1beta1.PipelineRun) *v1beta1.PipelineSpec {
+	p = p.DeepCopy()
+	replacements := map[string]string{}
+	for _, declaredWorkspace := range p.Workspaces {
+		key := fmt.Sprintf("workspaces.%s.bound", declaredWorkspace.Name)
+		replacements[key] = "false"
+	}
+	for _, boundWorkspace := range pr.Spec.Workspaces {
+		key := fmt.Sprintf("workspaces.%s.bound", boundWorkspace.Name)
+		replacements[key] = "true"
+	}
+	return ApplyReplacements(p, replacements, map[string][]string{})
+}
+
 // ApplyReplacements replaces placeholders for declared parameters with the specified replacements.
-func ApplyReplacements(p *v1alpha1.PipelineSpec, replacements map[string]string, arrayReplacements map[string][]string) *v1alpha1.PipelineSpec {
+func ApplyReplacements(p *v1beta1.PipelineSpec, replacements map[string]string, arrayReplacements map[string][]string) *v1beta1.PipelineSpec {
 	p = p.DeepCopy()
 
-	tasks := p.Tasks
-
-	for i := range tasks {
-		tasks[i].Params = replaceParamValues(tasks[i].Params, replacements, arrayReplacements)
-		for j := range tasks[i].Conditions {
-			c := tasks[i].Conditions[j]
+	for i := range p.Tasks {
+		p.Tasks[i].Params = replaceParamValues(p.Tasks[i].Params, replacements, arrayReplacements)
+		for j := range p.Tasks[i].Conditions {
+			c := p.Tasks[i].Conditions[j]
 			c.Params = replaceParamValues(c.Params, replacements, arrayReplacements)
 		}
+		p.Tasks[i].WhenExpressions = p.Tasks[i].WhenExpressions.ReplaceWhenExpressionsVariables(replacements)
+	}
+
+	for i := range p.Finally {
+		p.Finally[i].Params = replaceParamValues(p.Finally[i].Params, replacements, arrayReplacements)
 	}
 
 	return p
 }
 
-func replaceParamValues(params []v1alpha1.Param, stringReplacements map[string]string, arrayReplacements map[string][]string) []v1alpha1.Param {
+func replaceParamValues(params []v1beta1.Param, stringReplacements map[string]string, arrayReplacements map[string][]string) []v1beta1.Param {
 	for i := range params {
 		params[i].Value.ApplyReplacements(stringReplacements, arrayReplacements)
 	}

@@ -1,4 +1,4 @@
-apiVersion: tekton.dev/v1alpha1
+apiVersion: tekton.dev/v1beta1
 kind: Pipeline
 metadata:
   name: pipeline-release-nightly
@@ -19,6 +19,8 @@ spec:
   - name: builtBaseImage
     type: image
   - name: builtEntrypointImage
+    type: image
+  - name: builtNopImage
     type: image
   - name: builtKubeconfigWriterImage
     type: image
@@ -83,6 +85,8 @@ spec:
             resource: builtBaseImage
           - name: builtEntrypointImage
             resource: builtEntrypointImage
+          - name: builtNopImage
+            resource: builtNopImage
           - name: builtKubeconfigWriterImage
             resource: builtKubeconfigWriterImage
           - name: builtCredsInitImage

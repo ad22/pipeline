@@ -1,3 +1,5 @@
+# `Conditions` are deprecated, use `WhenExpressions` instead
+# https://github.com/tektoncd/pipeline/blob/master/docs/pipelines.md#guard-task-execution-using-whenexpressions
 apiVersion: tekton.dev/v1alpha1
 kind: Condition
 metadata:
@@ -83,7 +85,7 @@ spec:
 apiVersion: tekton.dev/v1beta1
 kind: PipelineRun
 metadata:
-  name: condtional-pr
+  name: conditional-pr
 spec:
   pipelineRef:
     name: conditional-pipeline

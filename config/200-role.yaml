@@ -17,6 +17,10 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: tekton-pipelines-controller
   namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/instance: default
+    app.kubernetes.io/part-of: tekton-pipelines
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -26,12 +30,20 @@ rules:
     resources: ["configmaps"]
     verbs: ["get"]
     resourceNames: ["config-logging", "config-observability", "config-artifact-bucket", "config-artifact-pvc", "feature-flags", "config-leader-election"]
+  - apiGroups: ["policy"]
+    resources: ["podsecuritypolicies"]
+    resourceNames: ["tekton-pipelines"]
+    verbs: ["use"]
 ---
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: tekton-pipelines-webhook
   namespace: tekton-pipelines
+  labels:
+    app.kubernetes.io/component: webhook
+    app.kubernetes.io/instance: default
+    app.kubernetes.io/part-of: tekton-pipelines
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
@@ -40,7 +52,7 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get"]
-    resourceNames: ["config-logging", "config-observability"]
+    resourceNames: ["config-logging", "config-observability", "config-leader-election"]
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["list", "watch"]
@@ -51,3 +63,7 @@ rules:
     resources: ["secrets"]
     verbs: ["get", "update"]
     resourceNames: ["webhook-certs"]
+  - apiGroups: ["policy"]
+    resources: ["podsecuritypolicies"]
+    resourceNames: ["tekton-pipelines"]
+    verbs: ["use"]

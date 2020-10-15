@@ -6,9 +6,8 @@
 1.  Create [a GitHub account](https://github.com/join)
 1.  Setup
     [GitHub access via SSH](https://help.github.com/articles/connecting-to-github-with-ssh/)
+1.  Set up your [development environment](#environment-setup)
 1.  [Create and checkout a repo fork](#checkout-your-fork)
-1.  Set up your [shell environment](#environment-setup)
-1.  Install [requirements](#requirements)
 1.  [Set up a Kubernetes cluster](#kubernetes-cluster)
 1.  [Configure kubectl to use your cluster](https://kubernetes.io/docs/tasks/access-application-cluster/configure-access-multiple-clusters/)
 1.  [Set up a docker repository you can push to](https://github.com/knative/serving/blob/4a8c859741a4454bdd62c2b60069b7d05f5468e7/docs/setting-up-a-docker-registry.md)
@@ -20,7 +19,7 @@ Then you can [iterate](#iterating) (including
 
 Welcome to the project!! You may find these resources helpful to ramp up on some
 of the technology this project is built on. This project extends Kubernetes (aka
-`k8s`) with Custom Resource Definitions (CRDSs). To find out more:
+`k8s`) with Custom Resource Definitions (CRDs). To find out more:
 
 -   [The Kubernetes docs on Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/) -
     These will orient you on what words like "Resource" and "Controller"
@@ -41,114 +40,23 @@ At this point, you may find it useful to return to these `Tekton Pipeline` docs:
     Some of the terms here may make more sense!
 -   Install via
     [official installation docs](https://github.com/tektoncd/pipeline/blob/master/docs/install.md)
-    or continue though [getting started for development](#getting-started)
+    or continue through [getting started for development](#getting-started)
 -   [Tekton Pipeline "Hello World" tutorial](https://github.com/tektoncd/pipeline/blob/master/docs/tutorial.md) -
     Define `Tasks`, `Pipelines`, and `PipelineResources`, see what happens when
     they are run
-
-### Checkout your fork
-
-The Go tools require that you clone the repository to the
-`src/github.com/tektoncd/pipeline` directory in your
-[`GOPATH`](https://github.com/golang/go/wiki/SettingGOPATH).
-
-To check out this repository:
-
-1.  Create your own
-    [fork of this repo](https://help.github.com/articles/fork-a-repo/)
-1.  Clone it to your machine:
-
-```shell
-mkdir -p ${GOPATH}/src/github.com/tektoncd
-cd ${GOPATH}/src/github.com/tektoncd
-git clone git@github.com:${YOUR_GITHUB_USERNAME}/pipeline.git
-cd pipeline
-git remote add upstream git@github.com:tektoncd/pipeline.git
-git remote set-url --push upstream no_push
-```
-
-_Adding the `upstream` remote sets you up nicely for regularly
-[syncing your fork](https://help.github.com/articles/syncing-a-fork/)._
-
-### Requirements
+    
+## Environment Setup
 
 You must install these tools:
 
-1.  [`go`](https://golang.org/doc/install): The language Tekton Pipelines is
-    built in
 1.  [`git`](https://help.github.com/articles/set-up-git/): For source control
-1.  [`ko`](https://github.com/google/ko): For development. `ko` version v0.1 or
-    higher is required for `pipeline` to work correctly.
-1.  [`kubectl`](https://kubernetes.io/docs/tasks/tools/install-kubectl/): For
-    interacting with your kube cluster
+
+1.  [`go`](https://golang.org/doc/install): The language Tekton Pipelines is
+    built in. You need go version [v1.15](https://golang.org/dl/) or higher.
 
 Your [`$GOPATH`] setting is critical for `ko apply` to function properly: a
 successful run will typically involve building pushing images instead of only
 configuring Kubernetes resources.
-
-## Kubernetes cluster
-
-Docker for Desktop using an edge version has been proven to work for both
-developing and running Pipelines. The recommended configuration is:
-
--   Kubernetes version 1.15 or later
--   4 vCPU nodes (`n1-standard-4`)
--   Node autoscaling, up to 3 nodes
--   API scopes for cloud-platform
-
-To setup a cluster with Docker on Desktop:
-
-To use minikube: `bash minikube start eval $(minikube docker-env)`
-
-To use the Kubernetes that comes with Docker for Desktop: 1. First go into the
-Docker For Desktop preferences. Under the resource tabs ensure that you have at
-least 4 CPUs, 8.0 GiB Memory, and 1.0 GiB Swap. 1. Under the Kubernetes tab,
-enable Kubernetes. 1. Click the Apply and Restart button to save the
-preferences. 1. Switch the proper `kubectl` config context: `bash kubectl config
-get-contexts # You should see docker-for-desktop in the previous command output
-kubectl config use-context docker-for-desktop` To setup a cluster with GKE:
-
-1.  [Install required tools and setup GCP project](https://knative.dev/v0.12-docs/install/knative-with-gke/)
-    (You may find it useful to save the ID of the project in an environment
-    variable (e.g. `PROJECT_ID`).
-
-1.  Create a GKE cluster (with `--cluster-version=latest` but you can use any
-    version 1.15 or later):
-
-    ```bash
-    export PROJECT_ID=my-gcp-project
-    export CLUSTER_NAME=mycoolcluster
-
-    gcloud container clusters create $CLUSTER_NAME \
-     --enable-autoscaling \
-     --min-nodes=1 \
-     --max-nodes=3 \
-     --scopes=cloud-platform \
-     --enable-basic-auth \
-     --no-issue-client-certificate \
-     --project=$PROJECT_ID \
-     --region=us-central1 \
-     --machine-type=n1-standard-4 \
-     --image-type=cos \
-     --num-nodes=1 \
-     --cluster-version=1.15
-    ```
-
-    Note that
-    [the `--scopes` argument to `gcloud container cluster create`](https://cloud.google.com/sdk/gcloud/reference/container/clusters/create#--scopes)
-    controls what GCP resources the cluster's default service account has access
-    to; for example to give the default service account full access to your GCR
-    registry, you can add `storage-full` to your `--scopes` arg.
-
-1.  Grant cluster-admin permissions to the current user:
-
-    ```bash
-    kubectl create clusterrolebinding cluster-admin-binding \
-    --clusterrole=cluster-admin \
-    --user=$(gcloud config get-value core/account)
-    ```
-
-## Environment Setup
 
 To [run your controllers with `ko`](#install-pipeline) you'll need to set these
 environment variables (we recommend adding them to your `.bashrc`):
@@ -180,6 +88,14 @@ for your `KO_DOCKER_REPO` if required. To be able to push images to
 gcloud auth configure-docker
 ```
 
+After setting `GOPATH` and putting `$GOPATH/bin` on your `PATH`, you must then install these tools:
+
+3.  [`ko`](https://github.com/google/ko): For development. `ko` version v0.5.1 or
+    higher is required for `pipeline` to work correctly.
+    
+4.  [`kubectl`](https://kubernetes.io/docs/tasks/tools/install-kubectl/): For
+    interacting with your kube cluster
+
 The user you are using to interact with your k8s cluster must be a cluster admin
 to create role bindings:
 
@@ -208,6 +124,114 @@ ko resolve -f config | sed -e '/kind: Namespace/!b;n;n;s/:.*/: '"${TARGET_NAMESP
     kubectl apply -f-
 kubectl set env deployments --all SYSTEM_NAMESPACE=${TARGET_NAMESPACE} -n ${TARGET_NAMESPACE}
 ```
+
+### Checkout your fork
+
+The Go tools require that you clone the repository to the
+`src/github.com/tektoncd/pipeline` directory in your
+[`GOPATH`](https://github.com/golang/go/wiki/SettingGOPATH).
+
+To check out this repository:
+
+1.  Create your own
+    [fork of this repo](https://help.github.com/articles/fork-a-repo/)
+1.  Clone it to your machine:
+
+```shell
+mkdir -p ${GOPATH}/src/github.com/tektoncd
+cd ${GOPATH}/src/github.com/tektoncd
+git clone git@github.com:${YOUR_GITHUB_USERNAME}/pipeline.git
+cd pipeline
+git remote add upstream git@github.com:tektoncd/pipeline.git
+git remote set-url --push upstream no_push
+```
+
+_Adding the `upstream` remote sets you up nicely for regularly
+[syncing your fork](https://help.github.com/articles/syncing-a-fork/)._
+
+## Kubernetes cluster
+
+The recommended configuration is:
+
+-   Kubernetes version 1.16 or later
+-   4 vCPU nodes (`n1-standard-4`)
+-   Node autoscaling, up to 3 nodes
+-   API scopes for cloud-platform
+
+
+### To setup a cluster using MiniKube:
+
+- Follow instructions for your platform to [Install Minikube](https://kubernetes.io/docs/tasks/tools/install-minikube/) and start a session as follows:
+
+```bash
+minikube start eval $(minikube docker-env)
+```
+
+### To setup a cluster with Docker Desktop:
+
+Docker Desktop versions come integrated with an edge version of Kubernetes that has been proven to work for both developing and running Pipelines.  To find out what Kubernetes a specific version of Docker Desktop includes, please refer to the release notes for your platform here: https://docs.docker.com/.
+
+To enable the Kubernetes that comes with Docker Desktop:
+
+1.  From the Docker Desktop dropdown menu, open the `preferences...` interface.
+
+1. Under the `Resources` tab ensure that in the `ADVANCED` menuitem you have at allocated at least 4 CPUs, 8.0 GiB Memory, and 1.0 GiB Swap.
+
+1.  Under the `Kubernetes` tab, check the   `Enable Kubernetes` box.
+
+    * *Note: the Kubernetes version Docker Desktop will use is displayed at the top of the window.*
+
+1.  Click the `Apply and Restart` button to save the preferences.
+
+1.  Switch the proper `kubectl` config context:
+
+    ```bash
+    kubectl config get-contexts # You should see docker-for-desktop in the previous command output
+    kubectl config use-context docker-for-desktop
+    ```
+    * *Note: Docker Desktop menu provides a `Kubernetes` menuitem that allows you to select between contexts which is equivalent to the `kubectl` command.*
+
+### To setup a cluster with GKE:
+
+1.  [Install required tools and setup GCP project](https://knative.dev/v0.12-docs/install/knative-with-gke/)
+    (You may find it useful to save the ID of the project in an environment
+    variable (e.g. `PROJECT_ID`).
+
+1.  Create a GKE cluster (with `--cluster-version=latest` but you can use any
+    version 1.16 or later):
+
+    ```bash
+    export PROJECT_ID=my-gcp-project
+    export CLUSTER_NAME=mycoolcluster
+
+    gcloud container clusters create $CLUSTER_NAME \
+     --enable-autoscaling \
+     --min-nodes=1 \
+     --max-nodes=3 \
+     --scopes=cloud-platform \
+     --enable-basic-auth \
+     --no-issue-client-certificate \
+     --project=$PROJECT_ID \
+     --region=us-central1 \
+     --machine-type=n1-standard-4 \
+     --image-type=cos \
+     --num-nodes=1 \
+     --cluster-version=1.16
+    ```
+
+    Note that
+    [the `--scopes` argument to `gcloud container cluster create`](https://cloud.google.com/sdk/gcloud/reference/container/clusters/create#--scopes)
+    controls what GCP resources the cluster's default service account has access
+    to; for example to give the default service account full access to your GCR
+    registry, you can add `storage-full` to your `--scopes` arg.
+
+1.  Grant cluster-admin permissions to the current user:
+
+    ```bash
+    kubectl create clusterrolebinding cluster-admin-binding \
+    --clusterrole=cluster-admin \
+    --user=$(gcloud config get-value core/account)
+    ```
 
 ## Iterating
 

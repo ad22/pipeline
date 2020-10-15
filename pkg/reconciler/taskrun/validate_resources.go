@@ -19,13 +19,13 @@ package taskrun
 import (
 	"fmt"
 
-	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/list"
 	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun/resources"
 )
 
-func validateResources(requiredResources []v1beta1.TaskResource, providedResources map[string]*v1alpha1.PipelineResource) error {
+func validateResources(requiredResources []v1beta1.TaskResource, providedResources map[string]*resourcev1alpha1.PipelineResource) error {
 	required := make([]string, 0, len(requiredResources))
 	optional := make([]string, 0, len(requiredResources))
 	for _, resource := range requiredResources {
@@ -64,9 +64,9 @@ func validateResources(requiredResources []v1beta1.TaskResource, providedResourc
 	return nil
 }
 
-func validateParams(paramSpecs []v1beta1.ParamSpec, params []v1alpha1.Param) error {
+func validateParams(paramSpecs []v1beta1.ParamSpec, params []v1beta1.Param) error {
 	var neededParams []string
-	paramTypes := make(map[string]v1alpha1.ParamType)
+	paramTypes := make(map[string]v1beta1.ParamType)
 	neededParams = make([]string, 0, len(paramSpecs))
 	for _, inputResourceParam := range paramSpecs {
 		neededParams = append(neededParams, inputResourceParam.Name)
@@ -109,9 +109,9 @@ func validateParams(paramSpecs []v1beta1.ParamSpec, params []v1alpha1.Param) err
 }
 
 // ValidateResolvedTaskResources validates task inputs, params and output matches taskrun
-func ValidateResolvedTaskResources(params []v1alpha1.Param, rtr *resources.ResolvedTaskResources) error {
+func ValidateResolvedTaskResources(params []v1beta1.Param, rtr *resources.ResolvedTaskResources) error {
 	if err := validateParams(rtr.TaskSpec.Params, params); err != nil {
-		return fmt.Errorf("invalid input params: %w", err)
+		return fmt.Errorf("invalid input params for task %s: %w", rtr.TaskName, err)
 	}
 	inputs := []v1beta1.TaskResource{}
 	outputs := []v1beta1.TaskResource{}
@@ -120,10 +120,10 @@ func ValidateResolvedTaskResources(params []v1alpha1.Param, rtr *resources.Resol
 		outputs = rtr.TaskSpec.Resources.Outputs
 	}
 	if err := validateResources(inputs, rtr.Inputs); err != nil {
-		return fmt.Errorf("invalid input resources: %w", err)
+		return fmt.Errorf("invalid input resources for task %s: %w", rtr.TaskName, err)
 	}
 	if err := validateResources(outputs, rtr.Outputs); err != nil {
-		return fmt.Errorf("invalid output resources: %w", err)
+		return fmt.Errorf("invalid output resources for task %s: %w", rtr.TaskName, err)
 	}
 
 	return nil

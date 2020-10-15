@@ -17,50 +17,46 @@ limitations under the License.
 package pod
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/tektoncd/pipeline/pkg/apis/config"
+	"github.com/tektoncd/pipeline/pkg/system"
 	"github.com/tektoncd/pipeline/test/diff"
 	"github.com/tektoncd/pipeline/test/names"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	fakek8s "k8s.io/client-go/kubernetes/fake"
+	logtesting "knative.dev/pkg/logging/testing"
 )
 
 const (
-	serviceAccountName = "my-service-account"
-	namespace          = "namespacey-mcnamespace"
+	serviceAccountName           = "my-service-account"
+	namespace                    = "namespacey-mcnamespace"
+	featureFlagRequireKnownHosts = "require-git-ssh-secret-known-hosts"
 )
 
 func TestCredsInit(t *testing.T) {
-	volumeMounts := []corev1.VolumeMount{{
-		Name: "implicit-volume-mount",
-	}}
-	fooEnvVar := corev1.EnvVar{
-		Name:  "FOO",
-		Value: "bar",
-	}
-	credsInitHomeEnvVar := corev1.EnvVar{
-		Name:  "HOME",
-		Value: credsInitHomeDir,
-	}
 	customHomeEnvVar := corev1.EnvVar{
 		Name:  "HOME",
 		Value: "/users/home/my-test-user",
 	}
 
 	for _, c := range []struct {
-		desc    string
-		want    *corev1.Container
-		objs    []runtime.Object
-		envVars []corev1.EnvVar
+		desc             string
+		wantArgs         []string
+		wantVolumeMounts []corev1.VolumeMount
+		objs             []runtime.Object
+		envVars          []corev1.EnvVar
 	}{{
 		desc: "service account exists with no secrets; nothing to initialize",
 		objs: []runtime.Object{
 			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: serviceAccountName, Namespace: namespace}},
 		},
-		want: nil,
+		wantArgs:         nil,
+		wantVolumeMounts: nil,
 	}, {
 		desc: "service account has no annotated secrets; nothing to initialize",
 		objs: []runtime.Object{
@@ -80,7 +76,8 @@ func TestCredsInit(t *testing.T) {
 				},
 			},
 		},
-		want: nil,
+		wantArgs:         nil,
+		wantVolumeMounts: nil,
 	}, {
 		desc: "service account has annotated secret and no HOME env var passed in; initialize creds in /tekton/creds",
 		objs: []runtime.Object{
@@ -108,23 +105,17 @@ func TestCredsInit(t *testing.T) {
 				},
 			},
 		},
-		envVars: []corev1.EnvVar{fooEnvVar},
-		want: &corev1.Container{
-			Name:    "credential-initializer",
-			Image:   images.CredsImage,
-			Command: []string{"/ko-app/creds-init"},
-			Args: []string{
-				"-basic-docker=my-creds=https://docker.io",
-				"-basic-docker=my-creds=https://us.gcr.io",
-				"-basic-git=my-creds=github.com",
-				"-basic-git=my-creds=gitlab.com",
-			},
-			Env: []corev1.EnvVar{fooEnvVar, credsInitHomeEnvVar},
-			VolumeMounts: append(volumeMounts, corev1.VolumeMount{
-				Name:      "tekton-internal-secret-volume-my-creds-9l9zj",
-				MountPath: "/tekton/creds-secrets/my-creds",
-			}),
+		envVars: []corev1.EnvVar{},
+		wantArgs: []string{
+			"-basic-docker=my-creds=https://docker.io",
+			"-basic-docker=my-creds=https://us.gcr.io",
+			"-basic-git=my-creds=github.com",
+			"-basic-git=my-creds=gitlab.com",
 		},
+		wantVolumeMounts: []corev1.VolumeMount{{
+			Name:      "tekton-internal-secret-volume-my-creds-9l9zj",
+			MountPath: "/tekton/creds-secrets/my-creds",
+		}},
 	}, {
 		desc: "service account with secret and HOME env var passed in",
 		objs: []runtime.Object{
@@ -153,35 +144,123 @@ func TestCredsInit(t *testing.T) {
 			},
 		},
 		envVars: []corev1.EnvVar{customHomeEnvVar},
-		want: &corev1.Container{
-			Name:    "credential-initializer",
-			Image:   images.CredsImage,
-			Command: []string{"/ko-app/creds-init"},
-			Args: []string{
-				"-basic-docker=my-creds=https://docker.io",
-				"-basic-docker=my-creds=https://us.gcr.io",
-				"-basic-git=my-creds=github.com",
-				"-basic-git=my-creds=gitlab.com",
-			},
-			Env: []corev1.EnvVar{customHomeEnvVar},
-			VolumeMounts: append(volumeMounts, corev1.VolumeMount{
-				Name:      "tekton-internal-secret-volume-my-creds-9l9zj",
-				MountPath: "/tekton/creds-secrets/my-creds",
-			}),
+		wantArgs: []string{
+			"-basic-docker=my-creds=https://docker.io",
+			"-basic-docker=my-creds=https://us.gcr.io",
+			"-basic-git=my-creds=github.com",
+			"-basic-git=my-creds=gitlab.com",
 		},
+		wantVolumeMounts: []corev1.VolumeMount{{
+			Name:      "tekton-internal-secret-volume-my-creds-9l9zj",
+			MountPath: "/tekton/creds-secrets/my-creds",
+		}},
 	}} {
 		t.Run(c.desc, func(t *testing.T) {
 			names.TestingSeed()
 			kubeclient := fakek8s.NewSimpleClientset(c.objs...)
-			got, volumes, err := credsInit(images.CredsImage, serviceAccountName, namespace, kubeclient, volumeMounts, c.envVars)
+			args, volumes, volumeMounts, err := credsInit(context.Background(), serviceAccountName, namespace, kubeclient)
 			if err != nil {
 				t.Fatalf("credsInit: %v", err)
 			}
-			if got == nil && len(volumes) > 0 {
-				t.Errorf("Got nil creds-init container, with non-empty volumes: %v", volumes)
+			if len(args) == 0 && len(volumes) != 0 {
+				t.Fatalf("credsInit returned secret volumes but no arguments")
 			}
-			if d := cmp.Diff(c.want, got); d != "" {
+			if d := cmp.Diff(c.wantArgs, args); d != "" {
 				t.Fatalf("Diff %s", diff.PrintWantGot(d))
+			}
+			if d := cmp.Diff(c.wantVolumeMounts, volumeMounts); d != "" {
+				t.Fatalf("Diff %s", diff.PrintWantGot(d))
+			}
+		})
+	}
+}
+
+func TestCheckGitSSHSecret(t *testing.T) {
+	for _, tc := range []struct {
+		desc         string
+		configMap    *corev1.ConfigMap
+		secret       *corev1.Secret
+		wantErrorMsg string
+	}{{
+		desc: "require known_hosts but secret does not include known_hosts",
+		configMap: &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: config.GetFeatureFlagsConfigName(), Namespace: system.GetNamespace()},
+			Data: map[string]string{
+				featureFlagRequireKnownHosts: "true",
+			},
+		},
+		secret: &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-creds",
+				Namespace: namespace,
+				Annotations: map[string]string{
+					"tekton.dev/git-0": "github.com",
+				},
+			},
+			Type: "kubernetes.io/ssh-auth",
+			Data: map[string][]byte{
+				"ssh-privatekey": []byte("Hello World!"),
+			},
+		},
+		wantErrorMsg: "TaskRun validation failed. Git SSH Secret must have \"known_hosts\" included " +
+			"when feature flag \"require-git-ssh-secret-known-hosts\" is set to true",
+	}, {
+		desc: "require known_hosts and secret includes known_hosts",
+		configMap: &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: config.GetFeatureFlagsConfigName(), Namespace: system.GetNamespace()},
+			Data: map[string]string{
+				featureFlagRequireKnownHosts: "true",
+			},
+		},
+		secret: &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-creds",
+				Namespace: namespace,
+				Annotations: map[string]string{
+					"tekton.dev/git-0": "github.com",
+				},
+			},
+			Type: "kubernetes.io/ssh-auth",
+			Data: map[string][]byte{
+				"ssh-privatekey": []byte("Hello World!"),
+				"known_hosts":    []byte("Hello World!"),
+			},
+		},
+	}, {
+		desc: "not require known_hosts",
+		configMap: &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: config.GetFeatureFlagsConfigName(), Namespace: system.GetNamespace()},
+			Data: map[string]string{
+				featureFlagRequireKnownHosts: "false",
+			},
+		},
+		secret: &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "my-creds",
+				Namespace: namespace,
+				Annotations: map[string]string{
+					"tekton.dev/git-0": "github.com",
+				},
+			},
+			Type: "kubernetes.io/ssh-auth",
+			Data: map[string][]byte{
+				"ssh-privatekey": []byte("Hello World!"),
+			},
+		},
+	}} {
+		t.Run(tc.desc, func(t *testing.T) {
+			store := config.NewStore(logtesting.TestLogger(t))
+			store.OnConfigChanged(tc.configMap)
+			err := checkGitSSHSecret(store.ToContext(context.Background()), tc.secret)
+
+			if wantError := tc.wantErrorMsg != ""; wantError {
+				if err == nil {
+					t.Errorf("expected error %q, got nil", tc.wantErrorMsg)
+				} else if diff := cmp.Diff(tc.wantErrorMsg, err.Error()); diff != "" {
+					t.Errorf("unexpected (-want, +got) = %v", diff)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}

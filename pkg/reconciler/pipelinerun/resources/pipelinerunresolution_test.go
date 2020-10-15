@@ -24,102 +24,129 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	tb "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
+	tbv1alpha1 "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
+	tb "github.com/tektoncd/pipeline/internal/builder/v1beta1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
+	resourcev1alpha1 "github.com/tektoncd/pipeline/pkg/apis/resource/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/reconciler/pipeline/dag"
 	"github.com/tektoncd/pipeline/pkg/reconciler/taskrun/resources"
 	"github.com/tektoncd/pipeline/test/diff"
 	"github.com/tektoncd/pipeline/test/names"
-	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/selection"
 	"knative.dev/pkg/apis"
 	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
 )
 
-var pts = []v1alpha1.PipelineTask{{
+var pts = []v1beta1.PipelineTask{{
 	Name:    "mytask1",
-	TaskRef: &v1alpha1.TaskRef{Name: "task"},
+	TaskRef: &v1beta1.TaskRef{Name: "task"},
 }, {
 	Name:    "mytask2",
-	TaskRef: &v1alpha1.TaskRef{Name: "task"},
+	TaskRef: &v1beta1.TaskRef{Name: "task"},
 }, {
 	Name:    "mytask3",
-	TaskRef: &v1alpha1.TaskRef{Name: "clustertask"},
+	TaskRef: &v1beta1.TaskRef{Name: "clustertask"},
 }, {
 	Name:    "mytask4",
-	TaskRef: &v1alpha1.TaskRef{Name: "task"},
+	TaskRef: &v1beta1.TaskRef{Name: "task"},
 	Retries: 1,
 }, {
 	Name:    "mytask5",
-	TaskRef: &v1alpha1.TaskRef{Name: "cancelledTask"},
+	TaskRef: &v1beta1.TaskRef{Name: "cancelledTask"},
 	Retries: 2,
 }, {
 	Name:    "mytask6",
-	TaskRef: &v1alpha1.TaskRef{Name: "taskWithConditions"},
-	Conditions: []v1alpha1.PipelineTaskCondition{{
+	TaskRef: &v1beta1.TaskRef{Name: "taskWithConditions"},
+	Conditions: []v1beta1.PipelineTaskCondition{{
 		ConditionRef: "always-true",
 	}},
 }, {
 	Name:     "mytask7",
-	TaskRef:  &v1alpha1.TaskRef{Name: "taskWithOneParent"},
+	TaskRef:  &v1beta1.TaskRef{Name: "taskWithOneParent"},
 	RunAfter: []string{"mytask6"},
 }, {
 	Name:     "mytask8",
-	TaskRef:  &v1alpha1.TaskRef{Name: "taskWithTwoParents"},
+	TaskRef:  &v1beta1.TaskRef{Name: "taskWithTwoParents"},
 	RunAfter: []string{"mytask1", "mytask6"},
 }, {
 	Name:     "mytask9",
-	TaskRef:  &v1alpha1.TaskRef{Name: "taskHasParentWithRunAfter"},
+	TaskRef:  &v1beta1.TaskRef{Name: "taskHasParentWithRunAfter"},
 	RunAfter: []string{"mytask8"},
+}, {
+	Name:    "mytask10",
+	TaskRef: &v1beta1.TaskRef{Name: "taskWithWhenExpressions"},
+	WhenExpressions: []v1beta1.WhenExpression{{
+		Input:    "foo",
+		Operator: selection.In,
+		Values:   []string{"foo", "bar"},
+	}},
+}, {
+	Name:    "mytask11",
+	TaskRef: &v1beta1.TaskRef{Name: "taskWithWhenExpressions"},
+	WhenExpressions: []v1beta1.WhenExpression{{
+		Input:    "foo",
+		Operator: selection.NotIn,
+		Values:   []string{"foo", "bar"},
+	}},
+}, {
+	Name:    "mytask12",
+	TaskRef: &v1beta1.TaskRef{Name: "taskWithWhenExpressions"},
+	WhenExpressions: []v1beta1.WhenExpression{{
+		Input:    "foo",
+		Operator: selection.In,
+		Values:   []string{"foo", "bar"},
+	}},
+	RunAfter: []string{"mytask1"},
 }}
 
-var p = &v1alpha1.Pipeline{
+var p = &v1beta1.Pipeline{
 	ObjectMeta: metav1.ObjectMeta{
 		Namespace: "namespace",
 		Name:      "pipeline",
 	},
-	Spec: v1alpha1.PipelineSpec{
+	Spec: v1beta1.PipelineSpec{
 		Tasks: pts,
 	},
 }
 
-var task = &v1alpha1.Task{
+var task = &v1beta1.Task{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "task",
 	},
-	Spec: v1alpha1.TaskSpec{TaskSpec: v1beta1.TaskSpec{
-		Steps: []v1alpha1.Step{{Container: corev1.Container{
+	Spec: v1beta1.TaskSpec{
+		Steps: []v1beta1.Step{{Container: corev1.Container{
 			Name: "step1",
 		}}},
-	}},
+	},
 }
 
-var clustertask = &v1alpha1.ClusterTask{
+var clustertask = &v1beta1.ClusterTask{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "clustertask",
 	},
-	Spec: v1alpha1.TaskSpec{TaskSpec: v1beta1.TaskSpec{
-		Steps: []v1alpha1.Step{{Container: corev1.Container{
+	Spec: v1beta1.TaskSpec{
+		Steps: []v1beta1.Step{{Container: corev1.Container{
 			Name: "step1",
 		}}},
-	}},
+	},
 }
 
-var trs = []v1alpha1.TaskRun{{
+var trs = []v1beta1.TaskRun{{
 	ObjectMeta: metav1.ObjectMeta{
 		Namespace: "namespace",
 		Name:      "pipelinerun-mytask1",
 	},
-	Spec: v1alpha1.TaskRunSpec{},
+	Spec: v1beta1.TaskRunSpec{},
 }, {
 	ObjectMeta: metav1.ObjectMeta{
 		Namespace: "namespace",
 		Name:      "pipelinerun-mytask2",
 	},
-	Spec: v1alpha1.TaskRunSpec{},
+	Spec: v1beta1.TaskRunSpec{},
 }}
 
 var condition = v1alpha1.Condition{
@@ -127,49 +154,49 @@ var condition = v1alpha1.Condition{
 		Name: "always-true",
 	},
 	Spec: v1alpha1.ConditionSpec{
-		Check: v1alpha1.Step{},
+		Check: v1beta1.Step{},
 	},
 }
 
-var conditionChecks = []v1alpha1.TaskRun{{
+var conditionChecks = []v1beta1.TaskRun{{
 	ObjectMeta: metav1.ObjectMeta{
 		Namespace: "namespace",
 		Name:      "always-true",
 	},
-	Spec: v1alpha1.TaskRunSpec{},
+	Spec: v1beta1.TaskRunSpec{},
 }}
 
-func makeStarted(tr v1alpha1.TaskRun) *v1alpha1.TaskRun {
+func makeStarted(tr v1beta1.TaskRun) *v1beta1.TaskRun {
 	newTr := newTaskRun(tr)
 	newTr.Status.Conditions[0].Status = corev1.ConditionUnknown
 	return newTr
 }
 
-func makeSucceeded(tr v1alpha1.TaskRun) *v1alpha1.TaskRun {
+func makeSucceeded(tr v1beta1.TaskRun) *v1beta1.TaskRun {
 	newTr := newTaskRun(tr)
 	newTr.Status.Conditions[0].Status = corev1.ConditionTrue
 	return newTr
 }
 
-func makeFailed(tr v1alpha1.TaskRun) *v1alpha1.TaskRun {
+func makeFailed(tr v1beta1.TaskRun) *v1beta1.TaskRun {
 	newTr := newTaskRun(tr)
 	newTr.Status.Conditions[0].Status = corev1.ConditionFalse
 	return newTr
 }
 
-func withCancelled(tr *v1alpha1.TaskRun) *v1alpha1.TaskRun {
-	tr.Status.Conditions[0].Reason = "TaskRunCancelled"
+func withCancelled(tr *v1beta1.TaskRun) *v1beta1.TaskRun {
+	tr.Status.Conditions[0].Reason = v1beta1.TaskRunSpecStatusCancelled
 	return tr
 }
 
-func withCancelledBySpec(tr *v1alpha1.TaskRun) *v1alpha1.TaskRun {
-	tr.Spec.Status = v1alpha1.TaskRunSpecStatusCancelled
+func withCancelledBySpec(tr *v1beta1.TaskRun) *v1beta1.TaskRun {
+	tr.Spec.Status = v1beta1.TaskRunSpecStatusCancelled
 	return tr
 }
 
-func makeRetried(tr v1alpha1.TaskRun) (newTr *v1alpha1.TaskRun) {
+func makeRetried(tr v1beta1.TaskRun) (newTr *v1beta1.TaskRun) {
 	newTr = newTaskRun(tr)
-	newTr.Status.RetriesStatus = []v1alpha1.TaskRunStatus{{
+	newTr.Status.RetriesStatus = []v1beta1.TaskRunStatus{{
 		Status: duckv1beta1.Status{
 			Conditions: []apis.Condition{{
 				Type:   apis.ConditionSucceeded,
@@ -179,8 +206,8 @@ func makeRetried(tr v1alpha1.TaskRun) (newTr *v1alpha1.TaskRun) {
 	}}
 	return
 }
-func withRetries(tr *v1alpha1.TaskRun) *v1alpha1.TaskRun {
-	tr.Status.RetriesStatus = []v1alpha1.TaskRunStatus{{
+func withRetries(tr *v1beta1.TaskRun) *v1beta1.TaskRun {
+	tr.Status.RetriesStatus = []v1beta1.TaskRunStatus{{
 		Status: duckv1beta1.Status{
 			Conditions: []apis.Condition{{
 				Type:   apis.ConditionSucceeded,
@@ -191,14 +218,14 @@ func withRetries(tr *v1alpha1.TaskRun) *v1alpha1.TaskRun {
 	return tr
 }
 
-func newTaskRun(tr v1alpha1.TaskRun) *v1alpha1.TaskRun {
-	return &v1alpha1.TaskRun{
+func newTaskRun(tr v1beta1.TaskRun) *v1beta1.TaskRun {
+	return &v1beta1.TaskRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace: tr.Namespace,
 			Name:      tr.Name,
 		},
 		Spec: tr.Spec,
-		Status: v1alpha1.TaskRunStatus{
+		Status: v1beta1.TaskRunStatus{
 			Status: duckv1beta1.Status{
 				Conditions: []apis.Condition{{Type: apis.ConditionSucceeded}},
 			},
@@ -285,18 +312,18 @@ var allFinishedState = PipelineRunState{{
 var successTaskConditionCheckState = TaskConditionCheckState{{
 	ConditionCheckName: "myconditionCheck",
 	Condition:          &condition,
-	ConditionCheck:     v1alpha1.NewConditionCheck(makeSucceeded(conditionChecks[0])),
+	ConditionCheck:     v1beta1.NewConditionCheck(makeSucceeded(conditionChecks[0])),
 }}
 
 var failedTaskConditionCheckState = TaskConditionCheckState{{
 	ConditionCheckName: "myconditionCheck",
 	Condition:          &condition,
-	ConditionCheck:     v1alpha1.NewConditionCheck(makeFailed(conditionChecks[0])),
+	ConditionCheck:     v1beta1.NewConditionCheck(makeFailed(conditionChecks[0])),
 }}
 
 var conditionCheckSuccessNoTaskStartedState = PipelineRunState{{
 	PipelineTask: &pts[5],
-	TaskRunName:  "pipeleinerun-conditionaltask",
+	TaskRunName:  "pipelinerun-conditionaltask",
 	TaskRun:      nil,
 	ResolvedTaskResources: &resources.ResolvedTaskResources{
 		TaskSpec: &task.Spec,
@@ -306,7 +333,7 @@ var conditionCheckSuccessNoTaskStartedState = PipelineRunState{{
 
 var conditionCheckStartedState = PipelineRunState{{
 	PipelineTask: &pts[5],
-	TaskRunName:  "pipeleinerun-conditionaltask",
+	TaskRunName:  "pipelinerun-conditionaltask",
 	TaskRun:      nil,
 	ResolvedTaskResources: &resources.ResolvedTaskResources{
 		TaskSpec: &task.Spec,
@@ -314,13 +341,13 @@ var conditionCheckStartedState = PipelineRunState{{
 	ResolvedConditionChecks: TaskConditionCheckState{{
 		ConditionCheckName: "myconditionCheck",
 		Condition:          &condition,
-		ConditionCheck:     v1alpha1.NewConditionCheck(makeStarted(conditionChecks[0])),
+		ConditionCheck:     v1beta1.NewConditionCheck(makeStarted(conditionChecks[0])),
 	}},
 }}
 
 var conditionCheckFailedWithNoOtherTasksState = PipelineRunState{{
 	PipelineTask: &pts[5],
-	TaskRunName:  "pipeleinerun-conditionaltask",
+	TaskRunName:  "pipelinerun-conditionaltask",
 	TaskRun:      nil,
 	ResolvedTaskResources: &resources.ResolvedTaskResources{
 		TaskSpec: &task.Spec,
@@ -330,7 +357,7 @@ var conditionCheckFailedWithNoOtherTasksState = PipelineRunState{{
 
 var conditionCheckFailedWithOthersPassedState = PipelineRunState{{
 	PipelineTask: &pts[5],
-	TaskRunName:  "pipeleinerun-conditionaltask",
+	TaskRunName:  "pipelinerun-conditionaltask",
 	TaskRun:      nil,
 	ResolvedTaskResources: &resources.ResolvedTaskResources{
 		TaskSpec: &task.Spec,
@@ -349,7 +376,7 @@ var conditionCheckFailedWithOthersPassedState = PipelineRunState{{
 
 var conditionCheckFailedWithOthersFailedState = PipelineRunState{{
 	PipelineTask: &pts[5],
-	TaskRunName:  "pipeleinerun-conditionaltask",
+	TaskRunName:  "pipelinerun-conditionaltask",
 	TaskRun:      nil,
 	ResolvedTaskResources: &resources.ResolvedTaskResources{
 		TaskSpec: &task.Spec,
@@ -451,32 +478,29 @@ var taskCancelled = PipelineRunState{{
 	},
 }}
 
-var taskWithOptionalResourcesDeprecated = &v1alpha1.Task{
+var taskWithOptionalResourcesDeprecated = &v1beta1.Task{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "task",
 	},
-	Spec: v1alpha1.TaskSpec{
-		TaskSpec: v1beta1.TaskSpec{
-			Steps: []v1alpha1.Step{{Container: corev1.Container{
-				Name: "step1",
-			}}},
-		},
-		Inputs: &v1alpha1.Inputs{
-			Resources: []v1alpha1.TaskResource{{ResourceDeclaration: v1alpha1.ResourceDeclaration{
+	Spec: v1beta1.TaskSpec{
+		Steps: []v1beta1.Step{{Container: corev1.Container{
+			Name: "step1",
+		}}},
+		Resources: &v1beta1.TaskResources{
+			Inputs: []v1beta1.TaskResource{{ResourceDeclaration: v1beta1.ResourceDeclaration{
 				Name:     "optional-input",
 				Type:     "git",
 				Optional: true,
-			}}, {ResourceDeclaration: v1alpha1.ResourceDeclaration{
+			}}, {ResourceDeclaration: v1beta1.ResourceDeclaration{
 				Name:     "required-input",
 				Type:     "git",
 				Optional: false,
-			}}}},
-		Outputs: &v1alpha1.Outputs{
-			Resources: []v1alpha1.TaskResource{{ResourceDeclaration: v1alpha1.ResourceDeclaration{
+			}}},
+			Outputs: []v1beta1.TaskResource{{ResourceDeclaration: v1beta1.ResourceDeclaration{
 				Name:     "optional-output",
 				Type:     "git",
 				Optional: true,
-			}}, {ResourceDeclaration: v1alpha1.ResourceDeclaration{
+			}}, {ResourceDeclaration: v1beta1.ResourceDeclaration{
 				Name:     "required-output",
 				Type:     "git",
 				Optional: false,
@@ -484,625 +508,371 @@ var taskWithOptionalResourcesDeprecated = &v1alpha1.Task{
 		},
 	},
 }
-var taskWithOptionalResources = &v1alpha1.Task{
+var taskWithOptionalResources = &v1beta1.Task{
 	ObjectMeta: metav1.ObjectMeta{
 		Name: "task",
 	},
-	Spec: v1alpha1.TaskSpec{
-		TaskSpec: v1beta1.TaskSpec{
-			Steps: []v1alpha1.Step{{Container: corev1.Container{
-				Name: "step1",
+	Spec: v1beta1.TaskSpec{
+		Steps: []v1beta1.Step{{Container: corev1.Container{
+			Name: "step1",
+		}}},
+		Resources: &v1beta1.TaskResources{
+			Inputs: []v1beta1.TaskResource{{ResourceDeclaration: v1beta1.ResourceDeclaration{
+				Name:     "optional-input",
+				Type:     "git",
+				Optional: true,
+			}}, {ResourceDeclaration: v1beta1.ResourceDeclaration{
+				Name:     "required-input",
+				Type:     "git",
+				Optional: false,
 			}}},
-			Resources: &v1beta1.TaskResources{
-				Inputs: []v1beta1.TaskResource{{ResourceDeclaration: v1alpha1.ResourceDeclaration{
-					Name:     "optional-input",
-					Type:     "git",
-					Optional: true,
-				}}, {ResourceDeclaration: v1alpha1.ResourceDeclaration{
-					Name:     "required-input",
-					Type:     "git",
-					Optional: false,
-				}}},
-				Outputs: []v1beta1.TaskResource{{ResourceDeclaration: v1alpha1.ResourceDeclaration{
-					Name:     "optional-output",
-					Type:     "git",
-					Optional: true,
-				}}, {ResourceDeclaration: v1alpha1.ResourceDeclaration{
-					Name:     "required-output",
-					Type:     "git",
-					Optional: false,
-				}}},
-			},
+			Outputs: []v1beta1.TaskResource{{ResourceDeclaration: v1beta1.ResourceDeclaration{
+				Name:     "optional-output",
+				Type:     "git",
+				Optional: true,
+			}}, {ResourceDeclaration: v1beta1.ResourceDeclaration{
+				Name:     "required-output",
+				Type:     "git",
+				Optional: false,
+			}}},
 		},
 	},
 }
 
 func DagFromState(state PipelineRunState) (*dag.Graph, error) {
-	pts := []v1alpha1.PipelineTask{}
+	pts := []v1beta1.PipelineTask{}
 	for _, rprt := range state {
 		pts = append(pts, *rprt.PipelineTask)
 	}
-	return dag.Build(v1alpha1.PipelineTaskList(pts))
+	return dag.Build(v1beta1.PipelineTaskList(pts))
 }
 
-func TestGetNextTasks(t *testing.T) {
-	tcs := []struct {
-		name         string
-		state        PipelineRunState
-		candidates   map[string]struct{}
-		expectedNext []*ResolvedPipelineRunTask
-	}{{
-		name:         "no-tasks-started-no-candidates",
-		state:        noneStartedState,
-		candidates:   map[string]struct{}{},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "no-tasks-started-one-candidate",
-		state: noneStartedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{noneStartedState[0]},
-	}, {
-		name:  "no-tasks-started-other-candidate",
-		state: noneStartedState,
-		candidates: map[string]struct{}{
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{noneStartedState[1]},
-	}, {
-		name:  "no-tasks-started-both-candidates",
-		state: noneStartedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{noneStartedState[0], noneStartedState[1]},
-	}, {
-		name:         "one-task-started-no-candidates",
-		state:        oneStartedState,
-		candidates:   map[string]struct{}{},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-started-one-candidate",
-		state: oneStartedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-started-other-candidate",
-		state: oneStartedState,
-		candidates: map[string]struct{}{
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneStartedState[1]},
-	}, {
-		name:  "one-task-started-both-candidates",
-		state: oneStartedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneStartedState[1]},
-	}, {
-		name:         "one-task-finished-no-candidates",
-		state:        oneFinishedState,
-		candidates:   map[string]struct{}{},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-finished-one-candidate",
-		state: oneFinishedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-finished-other-candidate",
-		state: oneFinishedState,
-		candidates: map[string]struct{}{
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneFinishedState[1]},
-	}, {
-		name:  "one-task-finished-both-candidate",
-		state: oneFinishedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneFinishedState[1]},
-	}, {
-		name:         "one-task-failed-no-candidates",
-		state:        oneFailedState,
-		candidates:   map[string]struct{}{},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-failed-one-candidate",
-		state: oneFailedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-task-failed-other-candidate",
-		state: oneFailedState,
-		candidates: map[string]struct{}{
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneFailedState[1]},
-	}, {
-		name:  "one-task-failed-both-candidates",
-		state: oneFailedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{oneFailedState[1]},
-	}, {
-		name:         "all-finished-no-candidates",
-		state:        allFinishedState,
-		candidates:   map[string]struct{}{},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "all-finished-one-candidate",
-		state: allFinishedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "all-finished-other-candidate",
-		state: allFinishedState,
-		candidates: map[string]struct{}{
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "all-finished-both-candidates",
-		state: allFinishedState,
-		candidates: map[string]struct{}{
-			"mytask1": {},
-			"mytask2": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}, {
-		name:  "one-cancelled-one-candidate",
-		state: taskCancelled,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
-	}}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			next := tc.state.GetNextTasks(tc.candidates)
-			if d := cmp.Diff(next, tc.expectedNext); d != "" {
-				t.Errorf("Didn't get expected next Tasks %s", diff.PrintWantGot(d))
-			}
-		})
-	}
-}
-
-func TestGetNextTaskWithRetries(t *testing.T) {
-
-	var taskCancelledByStatusState = PipelineRunState{{
-		PipelineTask: &pts[4], // 2 retries needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelled(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskCancelledBySpecState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelledBySpec(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskRunningState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      makeStarted(trs[0]),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskSucceededState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      makeSucceeded(trs[0]),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskRetriedState = PipelineRunState{{
-		PipelineTask: &pts[3], // 1 retry needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelled(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskExpectedState = PipelineRunState{{
-		PipelineTask: &pts[4], // 2 retries needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withRetries(makeFailed(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
+func TestIsSkipped(t *testing.T) {
 
 	tcs := []struct {
-		name         string
-		state        PipelineRunState
-		candidates   map[string]struct{}
-		expectedNext []*ResolvedPipelineRunTask
+		name     string
+		taskName string
+		state    PipelineRunState
+		expected bool
 	}{{
-		name:  "tasks-cancelled-no-candidates",
-		state: taskCancelledByStatusState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
+		name:     "tasks-condition-passed",
+		taskName: "mytask1",
+		state: PipelineRunState{{
+			PipelineTask: &pts[0],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: successTaskConditionCheckState,
+		}},
+		expected: false,
 	}, {
-		name:  "tasks-cancelled-bySpec-no-candidates",
-		state: taskCancelledBySpecState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
+		name:     "tasks-condition-failed",
+		taskName: "mytask1",
+		state: PipelineRunState{{
+			PipelineTask: &pts[0],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: failedTaskConditionCheckState,
+		}},
+		expected: true,
 	}, {
-		name:  "tasks-running-no-candidates",
-		state: taskRunningState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
+		name:     "tasks-multiple-conditions-passed-failed",
+		taskName: "mytask1",
+		state: PipelineRunState{{
+			PipelineTask: &pts[0],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: TaskConditionCheckState{{
+				ConditionCheckName: "myconditionCheck",
+				Condition:          &condition,
+				ConditionCheck:     v1beta1.NewConditionCheck(makeFailed(conditionChecks[0])),
+			}, {
+				ConditionCheckName: "myconditionCheck",
+				Condition:          &condition,
+				ConditionCheck:     v1beta1.NewConditionCheck(makeSucceeded(conditionChecks[0])),
+			}},
+		}},
+		expected: true,
 	}, {
-		name:  "tasks-succeeded-bySpec-no-candidates",
-		state: taskSucceededState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
+		name:     "tasks-condition-running",
+		taskName: "mytask6",
+		state:    conditionCheckStartedState,
+		expected: false,
 	}, {
-		name:  "tasks-retried-no-candidates",
-		state: taskRetriedState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{},
+		name:     "tasks-parent-condition-passed",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: successTaskConditionCheckState,
+		}, {
+			PipelineTask: &pts[6],
+		}},
+		expected: false,
 	}, {
-		name:  "tasks-retried-one-candidates",
-		state: taskExpectedState,
-		candidates: map[string]struct{}{
-			"mytask5": {},
-		},
-		expectedNext: []*ResolvedPipelineRunTask{taskExpectedState[0]},
-	}}
-
-	// iterate over *state* to get from candidate and check if TaskRun is there.
-	// Cancelled TaskRun should have a TaskRun cancelled and with a retry but should not retry.
-
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			next := tc.state.GetNextTasks(tc.candidates)
-			if d := cmp.Diff(next, tc.expectedNext); d != "" {
-				t.Errorf("Didn't get expected next Tasks %s", diff.PrintWantGot(d))
-			}
-		})
-	}
-}
-
-func TestIsDone(t *testing.T) {
-
-	var taskCancelledByStatusState = PipelineRunState{{
-		PipelineTask: &pts[4], // 2 retries needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelled(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskCancelledBySpecState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelledBySpec(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskRunningState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      makeStarted(trs[0]),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskSucceededState = PipelineRunState{{
-		PipelineTask: &pts[4],
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      makeSucceeded(trs[0]),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskRetriedState = PipelineRunState{{
-		PipelineTask: &pts[3], // 1 retry needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelled(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var taskExpectedState = PipelineRunState{{
-		PipelineTask: &pts[4], // 2 retries needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withRetries(makeFailed(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var noPipelineTaskState = PipelineRunState{{
-		PipelineTask: nil,
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withRetries(makeFailed(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	var noTaskRunState = PipelineRunState{{
-		PipelineTask: &pts[4], // 2 retries needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      nil,
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	tcs := []struct {
-		name       string
-		state      PipelineRunState
-		expected   bool
-		ptExpected []bool
-	}{{
-		name:       "tasks-cancelled-no-candidates",
-		state:      taskCancelledByStatusState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-parent-condition-failed",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: failedTaskConditionCheckState,
+		}, {
+			PipelineTask: &pts[6],
+		}},
+		expected: true,
 	}, {
-		name:       "tasks-cancelled-bySpec-no-candidates",
-		state:      taskCancelledBySpecState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-parent-condition-running",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-conditionaltask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+			ResolvedConditionChecks: TaskConditionCheckState{{
+				ConditionCheckName: "myconditionCheck",
+				Condition:          &condition,
+				ConditionCheck:     v1beta1.NewConditionCheck(makeStarted(conditionChecks[0])),
+			}},
+		}, {
+			PipelineTask: &pts[6],
+		}},
+		expected: false,
 	}, {
-		name:       "tasks-running-no-candidates",
-		state:      taskRunningState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-failed",
+		taskName: "mytask1",
+		state:    oneFailedState,
+		expected: false,
 	}, {
-		name:       "tasks-succeeded-bySpec-no-candidates",
-		state:      taskSucceededState,
-		expected:   true,
-		ptExpected: []bool{true},
+		name:     "tasks-passed",
+		taskName: "mytask1",
+		state:    oneFinishedState,
+		expected: false,
 	}, {
-		name:       "tasks-retried-no-candidates",
-		state:      taskRetriedState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-cancelled",
+		taskName: "mytask5",
+		state:    taskCancelled,
+		expected: false,
 	}, {
-		name:       "tasks-retried-one-candidates",
-		state:      taskExpectedState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-parent-failed",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-mytask1",
+			TaskRun:      makeFailed(trs[0]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[6], // mytask7 runAfter mytask6
+			TaskRunName:  "pipelinerun-mytask2",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
 	}, {
-		name:       "no-pipelineTask",
-		state:      noPipelineTaskState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-parent-cancelled",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-mytask1",
+			TaskRun:      withCancelled(makeFailed(trs[0])),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[6], // mytask7 runAfter mytask6
+			TaskRunName:  "pipelinerun-mytask2",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
 	}, {
-		name:       "No-taskrun",
-		state:      noTaskRunState,
-		expected:   false,
-		ptExpected: []bool{false},
+		name:     "tasks-grandparent-failed",
+		taskName: "mytask10",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-mytask1",
+			TaskRun:      makeFailed(trs[0]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[6], // mytask7 runAfter mytask6
+			TaskRunName:  "pipelinerun-mytask2",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &v1beta1.PipelineTask{
+				Name:     "mytask10",
+				TaskRef:  &v1beta1.TaskRef{Name: "task"},
+				RunAfter: []string{"mytask7"},
+			}, // mytask10 runAfter mytask7 runAfter mytask6
+			TaskRunName: "pipelinerun-mytask3",
+			TaskRun:     nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
+	}, {
+		name:     "tasks-parents-failed-passed",
+		taskName: "mytask8",
+		state: PipelineRunState{{
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-mytask1",
+			TaskRun:      makeSucceeded(trs[0]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[0],
+			TaskRunName:  "pipelinerun-mytask2",
+			TaskRun:      makeFailed(trs[0]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[7], // mytask8 runAfter mytask1, mytask6
+			TaskRunName:  "pipelinerun-mytask3",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
+	}, {
+		name:     "task-failed-pipeline-stopping",
+		taskName: "mytask7",
+		state: PipelineRunState{{
+			PipelineTask: &pts[0],
+			TaskRunName:  "pipelinerun-mytask1",
+			TaskRun:      makeFailed(trs[0]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[5],
+			TaskRunName:  "pipelinerun-mytask2",
+			TaskRun:      makeStarted(trs[1]),
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[6], // mytask7 runAfter mytask6
+			TaskRunName:  "pipelinerun-mytask3",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
+	}, {
+		name:     "tasks-when-expressions-passed",
+		taskName: "mytask10",
+		state: PipelineRunState{{
+			PipelineTask: &pts[9],
+			TaskRunName:  "pipelinerun-guardedtask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: false,
+	}, {
+		name:     "tasks-when-expression-failed",
+		taskName: "mytask11",
+		state: PipelineRunState{{
+			PipelineTask: &pts[10],
+			TaskRunName:  "pipelinerun-guardedtask",
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: true,
+	}, {
+		name:     "when-expression-task-but-without-parent-done",
+		taskName: "mytask12",
+		state: PipelineRunState{{
+			PipelineTask: &pts[0],
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}, {
+			PipelineTask: &pts[11],
+			TaskRun:      nil,
+			ResolvedTaskResources: &resources.ResolvedTaskResources{
+				TaskSpec: &task.Spec,
+			},
+		}},
+		expected: false,
 	}}
 
 	for _, tc := range tcs {
 		t.Run(tc.name, func(t *testing.T) {
-
-			isDone := tc.state.IsDone()
-			if d := cmp.Diff(isDone, tc.expected); d != "" {
-				t.Errorf("Didn't get expected IsDone %s", diff.PrintWantGot(d))
-			}
-			for i, pt := range tc.state {
-				isDone = pt.IsDone()
-				if d := cmp.Diff(isDone, tc.ptExpected[i]); d != "" {
-					t.Errorf("Didn't get expected (ResolvedPipelineRunTask) IsDone %s", diff.PrintWantGot(d))
-				}
-
-			}
-		})
-	}
-}
-
-func TestSuccessfulPipelineTaskNames(t *testing.T) {
-	tcs := []struct {
-		name          string
-		state         PipelineRunState
-		expectedNames []string
-	}{{
-		name:          "no-tasks-started",
-		state:         noneStartedState,
-		expectedNames: []string{},
-	}, {
-		name:          "one-task-started",
-		state:         oneStartedState,
-		expectedNames: []string{},
-	}, {
-		name:          "one-task-finished",
-		state:         oneFinishedState,
-		expectedNames: []string{"mytask1"},
-	}, {
-		name:          "one-task-failed",
-		state:         oneFailedState,
-		expectedNames: []string{},
-	}, {
-		name:          "all-finished",
-		state:         allFinishedState,
-		expectedNames: []string{"mytask1", "mytask2"},
-	}}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			names := tc.state.SuccessfulPipelineTaskNames()
-			if d := cmp.Diff(names, tc.expectedNames); d != "" {
-				t.Errorf("Expected to get completed names %v but got something different %s", tc.expectedNames, diff.PrintWantGot(d))
-			}
-		})
-	}
-}
-
-func TestGetPipelineConditionStatus(t *testing.T) {
-
-	var taskRetriedState = PipelineRunState{{
-		PipelineTask: &pts[3], // 1 retry needed
-		TaskRunName:  "pipelinerun-mytask1",
-		TaskRun:      withCancelled(makeRetried(trs[0])),
-		ResolvedTaskResources: &resources.ResolvedTaskResources{
-			TaskSpec: &task.Spec,
-		},
-	}}
-
-	tcs := []struct {
-		name           string
-		state          []*ResolvedPipelineRunTask
-		expectedStatus corev1.ConditionStatus
-	}{{
-		name:           "no-tasks-started",
-		state:          noneStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-started",
-		state:          oneStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-finished",
-		state:          oneFinishedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-failed",
-		state:          oneFailedState,
-		expectedStatus: corev1.ConditionFalse,
-	}, {
-		name:           "all-finished",
-		state:          allFinishedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "one-retry-needed",
-		state:          taskRetriedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "condition-success-no-task started",
-		state:          conditionCheckSuccessNoTaskStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "condition-check-in-progress",
-		state:          conditionCheckStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "condition-failed-no-other-tasks", // 1 task pipeline with a condition that fails
-		state:          conditionCheckFailedWithNoOtherTasksState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "condition-failed-another-task-succeeded", // 1 task skipped due to condition, but others pass
-		state:          conditionCheckFailedWithOthersPassedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "condition-failed-another-task-failed", // 1 task skipped due to condition, but others failed
-		state:          conditionCheckFailedWithOthersFailedState,
-		expectedStatus: corev1.ConditionFalse,
-	}, {
-		name:           "no-tasks-started",
-		state:          noneStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-started",
-		state:          oneStartedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-finished",
-		state:          oneFinishedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "one-task-failed",
-		state:          oneFailedState,
-		expectedStatus: corev1.ConditionFalse,
-	}, {
-		name:           "all-finished",
-		state:          allFinishedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "one-retry-needed",
-		state:          taskRetriedState,
-		expectedStatus: corev1.ConditionUnknown,
-	}, {
-		name:           "task skipped due to condition failure in parent",
-		state:          taskWithParentSkippedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "task with multiple parent tasks -> one of which is skipped",
-		state:          taskWithMultipleParentsSkippedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "task with grand parent task skipped",
-		state:          taskWithGrandParentSkippedState,
-		expectedStatus: corev1.ConditionTrue,
-	}, {
-		name:           "task with grand parents; one parent failed",
-		state:          taskWithGrandParentsOneFailedState,
-		expectedStatus: corev1.ConditionFalse,
-	}, {
-		name:           "task with grand parents; one not run yet",
-		state:          taskWithGrandParentsOneNotRunState,
-		expectedStatus: corev1.ConditionUnknown,
-	}}
-	for _, tc := range tcs {
-		t.Run(tc.name, func(t *testing.T) {
-			pr := tb.PipelineRun("somepipelinerun")
-			dag, err := DagFromState(tc.state)
+			d, err := DagFromState(tc.state)
 			if err != nil {
-				t.Fatalf("Unexpected error while buildig DAG for state %v: %v", tc.state, err)
+				t.Fatalf("Could not get a dag from the TC state %#v: %v", tc.state, err)
 			}
-			c := GetPipelineConditionStatus(pr, tc.state, zap.NewNop().Sugar(), dag)
-			if c.Status != tc.expectedStatus {
-				t.Fatalf("Expected to get status %s but got %s for state %v", tc.expectedStatus, c.Status, tc.state)
+			stateMap := tc.state.ToMap()
+			rprt := stateMap[tc.taskName]
+			if rprt == nil {
+				t.Fatalf("Could not get task %s from the state: %v", tc.taskName, tc.state)
+			}
+			facts := PipelineRunFacts{
+				State:           tc.state,
+				TasksGraph:      d,
+				FinalTasksGraph: &dag.Graph{},
+			}
+			isSkipped := rprt.Skip(&facts)
+			if d := cmp.Diff(isSkipped, tc.expected); d != "" {
+				t.Errorf("Didn't get expected isSkipped %s", diff.PrintWantGot(d))
 			}
 		})
 	}
+}
+
+func getExpectedMessage(status corev1.ConditionStatus, successful, incomplete, skipped, failed, cancelled int) string {
+	if status == corev1.ConditionFalse || status == corev1.ConditionTrue {
+		return fmt.Sprintf("Tasks Completed: %d (Failed: %d, Cancelled %d), Skipped: %d",
+			successful+failed+cancelled, failed, cancelled, skipped)
+	}
+	return fmt.Sprintf("Tasks Completed: %d (Failed: %d, Cancelled %d), Incomplete: %d, Skipped: %d",
+		successful+failed+cancelled, failed, cancelled, incomplete, skipped)
 }
 
 func TestGetResourcesFromBindings(t *testing.T) {
 	pr := tb.PipelineRun("pipelinerun", tb.PipelineRunSpec("pipeline",
 		tb.PipelineRunResourceBinding("git-resource", tb.PipelineResourceBindingRef("sweet-resource")),
 		tb.PipelineRunResourceBinding("image-resource", tb.PipelineResourceBindingResourceSpec(
-			&v1alpha1.PipelineResourceSpec{
-				Type: v1alpha1.PipelineResourceTypeImage,
-				Params: []v1alpha1.ResourceParam{{
+			&resourcev1alpha1.PipelineResourceSpec{
+				Type: resourcev1alpha1.PipelineResourceTypeImage,
+				Params: []v1beta1.ResourceParam{{
 					Name:  "url",
 					Value: "gcr.io/sven",
 				}},
@@ -1110,7 +880,7 @@ func TestGetResourcesFromBindings(t *testing.T) {
 		),
 	))
 	r := tb.PipelineResource("sweet-resource")
-	getResource := func(name string) (*v1alpha1.PipelineResource, error) {
+	getResource := func(name string) (*resourcev1alpha1.PipelineResource, error) {
 		if name != "sweet-resource" {
 			return nil, fmt.Errorf("request for unexpected resource %s", name)
 		}
@@ -1131,7 +901,7 @@ func TestGetResourcesFromBindings(t *testing.T) {
 	r2, ok := m["image-resource"]
 	if !ok {
 		t.Errorf("Missing expected resource image-resource: %v", m)
-	} else if r2.Spec.Type != v1alpha1.PipelineResourceTypeImage ||
+	} else if r2.Spec.Type != resourcev1alpha1.PipelineResourceTypeImage ||
 		len(r2.Spec.Params) != 1 ||
 		r2.Spec.Params[0].Name != "url" ||
 		r2.Spec.Params[0].Value != "gcr.io/sven" {
@@ -1147,7 +917,7 @@ func TestGetResourcesFromBindings_Missing(t *testing.T) {
 	pr := tb.PipelineRun("pipelinerun", tb.PipelineRunSpec("pipeline",
 		tb.PipelineRunResourceBinding("git-resource", tb.PipelineResourceBindingRef("sweet-resource")),
 	))
-	getResource := func(name string) (*v1alpha1.PipelineResource, error) {
+	getResource := func(name string) (*resourcev1alpha1.PipelineResource, error) {
 		return nil, fmt.Errorf("request for unexpected resource %s", name)
 	}
 	_, err := GetResourcesFromBindings(pr, getResource)
@@ -1160,7 +930,7 @@ func TestGetResourcesFromBindings_ErrorGettingResource(t *testing.T) {
 	pr := tb.PipelineRun("pipelinerun", tb.PipelineRunSpec("pipeline",
 		tb.PipelineRunResourceBinding("git-resource", tb.PipelineResourceBindingRef("sweet-resource")),
 	))
-	getResource := func(name string) (*v1alpha1.PipelineResource, error) {
+	getResource := func(name string) (*resourcev1alpha1.PipelineResource, error) {
 		return nil, fmt.Errorf("iT HAS ALL GONE WRONG")
 	}
 	_, err := GetResourcesFromBindings(pr, getResource)
@@ -1184,32 +954,32 @@ func TestResolvePipelineRun(t *testing.T) {
 			tb.PipelineTaskOutputResource("output1", "git-resource"),
 		),
 		tb.PipelineTask("mytask4", "",
-			tb.PipelineTaskSpec(&v1alpha1.TaskSpec{TaskSpec: v1beta1.TaskSpec{
-				Steps: []v1alpha1.Step{{Container: corev1.Container{
+			tb.PipelineTaskSpec(v1beta1.TaskSpec{
+				Steps: []v1beta1.Step{{Container: corev1.Container{
 					Name: "step1",
 				}}},
-			}})),
+			})),
 	))
 
-	r := &v1alpha1.PipelineResource{
+	r := &resourcev1alpha1.PipelineResource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "someresource",
 		},
-		Spec: v1alpha1.PipelineResourceSpec{
-			Type: v1alpha1.PipelineResourceTypeGit,
+		Spec: resourcev1alpha1.PipelineResourceSpec{
+			Type: resourcev1alpha1.PipelineResourceTypeGit,
 		},
 	}
-	providedResources := map[string]*v1alpha1.PipelineResource{"git-resource": r}
-	pr := v1alpha1.PipelineRun{
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{"git-resource": r}
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
 	}
 	// The Task "task" doesn't actually take any inputs or outputs, but validating
 	// that is not done as part of Run resolution
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return nil, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, nil }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return nil, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, nil }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return nil, nil }
 
 	pipelineState, err := ResolvePipelineRun(context.Background(), pr, getTask, getTaskRun, getClusterTask, getCondition, p.Spec.Tasks, providedResources)
@@ -1223,10 +993,10 @@ func TestResolvePipelineRun(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: task.Name,
 			TaskSpec: &task.Spec,
-			Inputs: map[string]*v1alpha1.PipelineResource{
+			Inputs: map[string]*resourcev1alpha1.PipelineResource{
 				"input1": r,
 			},
-			Outputs: map[string]*v1alpha1.PipelineResource{},
+			Outputs: map[string]*resourcev1alpha1.PipelineResource{},
 		},
 	}, {
 		PipelineTask: &p.Spec.Tasks[1],
@@ -1235,8 +1005,8 @@ func TestResolvePipelineRun(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: task.Name,
 			TaskSpec: &task.Spec,
-			Inputs:   map[string]*v1alpha1.PipelineResource{},
-			Outputs: map[string]*v1alpha1.PipelineResource{
+			Inputs:   map[string]*resourcev1alpha1.PipelineResource{},
+			Outputs: map[string]*resourcev1alpha1.PipelineResource{
 				"output1": r,
 			},
 		},
@@ -1247,8 +1017,8 @@ func TestResolvePipelineRun(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: task.Name,
 			TaskSpec: &task.Spec,
-			Inputs:   map[string]*v1alpha1.PipelineResource{},
-			Outputs: map[string]*v1alpha1.PipelineResource{
+			Inputs:   map[string]*resourcev1alpha1.PipelineResource{},
+			Outputs: map[string]*resourcev1alpha1.PipelineResource{
 				"output1": r,
 			},
 		},
@@ -1259,34 +1029,34 @@ func TestResolvePipelineRun(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: "",
 			TaskSpec: &task.Spec,
-			Inputs:   map[string]*v1alpha1.PipelineResource{},
-			Outputs:  map[string]*v1alpha1.PipelineResource{},
+			Inputs:   map[string]*resourcev1alpha1.PipelineResource{},
+			Outputs:  map[string]*resourcev1alpha1.PipelineResource{},
 		},
 	}}
 
-	if d := cmp.Diff(expectedState, pipelineState, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{})); d != "" {
+	if d := cmp.Diff(expectedState, pipelineState, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{})); d != "" {
 		t.Errorf("Expected to get current pipeline state %v, but actual differed %s", expectedState, diff.PrintWantGot(d))
 	}
 }
 
 func TestResolvePipelineRun_PipelineTaskHasNoResources(t *testing.T) {
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:    "mytask1",
-		TaskRef: &v1alpha1.TaskRef{Name: "task"},
+		TaskRef: &v1beta1.TaskRef{Name: "task"},
 	}, {
 		Name:    "mytask2",
-		TaskRef: &v1alpha1.TaskRef{Name: "task"},
+		TaskRef: &v1beta1.TaskRef{Name: "task"},
 	}, {
 		Name:    "mytask3",
-		TaskRef: &v1alpha1.TaskRef{Name: "task"},
+		TaskRef: &v1beta1.TaskRef{Name: "task"},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return &trs[0], nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return clustertask, nil }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return &trs[0], nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return clustertask, nil }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return nil, nil }
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1301,39 +1071,39 @@ func TestResolvePipelineRun_PipelineTaskHasNoResources(t *testing.T) {
 	expectedTaskResources := &resources.ResolvedTaskResources{
 		TaskName: task.Name,
 		TaskSpec: &task.Spec,
-		Inputs:   map[string]*v1alpha1.PipelineResource{},
-		Outputs:  map[string]*v1alpha1.PipelineResource{},
+		Inputs:   map[string]*resourcev1alpha1.PipelineResource{},
+		Outputs:  map[string]*resourcev1alpha1.PipelineResource{},
 	}
-	if d := cmp.Diff(pipelineState[0].ResolvedTaskResources, expectedTaskResources, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{})); d != "" {
+	if d := cmp.Diff(pipelineState[0].ResolvedTaskResources, expectedTaskResources, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{})); d != "" {
 		t.Fatalf("Expected resources where only Tasks were resolved but but actual differed %s", diff.PrintWantGot(d))
 	}
-	if d := cmp.Diff(pipelineState[1].ResolvedTaskResources, expectedTaskResources, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{})); d != "" {
+	if d := cmp.Diff(pipelineState[1].ResolvedTaskResources, expectedTaskResources, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{})); d != "" {
 		t.Fatalf("Expected resources where only Tasks were resolved but but actual differed %s", diff.PrintWantGot(d))
 	}
 }
 
 func TestResolvePipelineRun_TaskDoesntExist(t *testing.T) {
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:    "mytask1",
-		TaskRef: &v1alpha1.TaskRef{Name: "task"},
+		TaskRef: &v1beta1.TaskRef{Name: "task"},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
 	// Return an error when the Task is retrieved, as if it didn't exist
-	getTask := func(name string) (v1alpha1.TaskInterface, error) {
-		return nil, kerrors.NewNotFound(v1alpha1.Resource("task"), name)
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) {
+		return nil, kerrors.NewNotFound(v1beta1.Resource("task"), name)
 	}
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) {
-		return nil, kerrors.NewNotFound(v1alpha1.Resource("clustertask"), name)
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) {
+		return nil, kerrors.NewNotFound(v1beta1.Resource("clustertask"), name)
 	}
 
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) {
-		return nil, kerrors.NewNotFound(v1alpha1.Resource("taskrun"), name)
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) {
+		return nil, kerrors.NewNotFound(v1beta1.Resource("taskrun"), name)
 	}
 	getCondition := func(name string) (*v1alpha1.Condition, error) {
 		return nil, nil
 	}
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1352,7 +1122,7 @@ func TestResolvePipelineRun_TaskDoesntExist(t *testing.T) {
 func TestResolvePipelineRun_ResourceBindingsDontExist(t *testing.T) {
 	tests := []struct {
 		name string
-		p    *v1alpha1.Pipeline
+		p    *v1beta1.Pipeline
 	}{{
 		name: "input doesnt exist",
 		p: tb.Pipeline("pipelines", tb.PipelineSpec(
@@ -1368,18 +1138,18 @@ func TestResolvePipelineRun_ResourceBindingsDontExist(t *testing.T) {
 			),
 		)),
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return &trs[0], nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return clustertask, nil }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return &trs[0], nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return clustertask, nil }
 	getCondition := func(name string) (*v1alpha1.Condition, error) {
 		return nil, nil
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pr := v1alpha1.PipelineRun{
+			pr := v1beta1.PipelineRun{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "pipelinerun",
 				},
@@ -1402,27 +1172,27 @@ func TestResolvePipelineRun_withExistingTaskRuns(t *testing.T) {
 		),
 	))
 
-	r := &v1alpha1.PipelineResource{
+	r := &resourcev1alpha1.PipelineResource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "someresource",
 		},
-		Spec: v1alpha1.PipelineResourceSpec{
-			Type: v1alpha1.PipelineResourceTypeGit,
+		Spec: resourcev1alpha1.PipelineResourceSpec{
+			Type: resourcev1alpha1.PipelineResourceTypeGit,
 		},
 	}
-	providedResources := map[string]*v1alpha1.PipelineResource{"git-resource": r}
-	taskrunStatus := map[string]*v1alpha1.PipelineRunTaskRunStatus{}
-	taskrunStatus["pipelinerun-mytask-with-a-really-long-name-to-trigger-tru-9l9zj"] = &v1alpha1.PipelineRunTaskRunStatus{
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{"git-resource": r}
+	taskrunStatus := map[string]*v1beta1.PipelineRunTaskRunStatus{}
+	taskrunStatus["pipelinerun-mytask-with-a-really-long-name-to-trigger-tru-9l9zj"] = &v1beta1.PipelineRunTaskRunStatus{
 		PipelineTaskName: "mytask-with-a-really-long-name-to-trigger-truncation",
-		Status:           &v1alpha1.TaskRunStatus{},
+		Status:           &v1beta1.TaskRunStatus{},
 	}
 
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
-		Status: v1alpha1.PipelineRunStatus{
-			PipelineRunStatusFields: v1alpha1.PipelineRunStatusFields{
+		Status: v1beta1.PipelineRunStatus{
+			PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
 				TaskRuns: taskrunStatus,
 			},
 		},
@@ -1430,9 +1200,9 @@ func TestResolvePipelineRun_withExistingTaskRuns(t *testing.T) {
 
 	// The Task "task" doesn't actually take any inputs or outputs, but validating
 	// that is not done as part of Run resolution
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return nil, nil }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return nil, nil }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return nil, nil }
 	pipelineState, err := ResolvePipelineRun(context.Background(), pr, getTask, getTaskRun, getClusterTask, getCondition, p.Spec.Tasks, providedResources)
 	if err != nil {
@@ -1445,14 +1215,14 @@ func TestResolvePipelineRun_withExistingTaskRuns(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: task.Name,
 			TaskSpec: &task.Spec,
-			Inputs: map[string]*v1alpha1.PipelineResource{
+			Inputs: map[string]*resourcev1alpha1.PipelineResource{
 				"input1": r,
 			},
-			Outputs: map[string]*v1alpha1.PipelineResource{},
+			Outputs: map[string]*resourcev1alpha1.PipelineResource{},
 		},
 	}}
 
-	if d := cmp.Diff(pipelineState, expectedState, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{})); d != "" {
+	if d := cmp.Diff(pipelineState, expectedState, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{})); d != "" {
 		t.Fatalf("Expected to get current pipeline state %v, but actual differed %s", expectedState, diff.PrintWantGot(d))
 	}
 }
@@ -1467,24 +1237,26 @@ func TestResolvedPipelineRun_PipelineTaskHasOptionalResources(t *testing.T) {
 		),
 	))
 
-	r := &v1alpha1.PipelineResource{
+	r := &resourcev1alpha1.PipelineResource{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "someresource",
 		},
-		Spec: v1alpha1.PipelineResourceSpec{
-			Type: v1alpha1.PipelineResourceTypeGit,
+		Spec: resourcev1alpha1.PipelineResourceSpec{
+			Type: resourcev1alpha1.PipelineResourceTypeGit,
 		},
 	}
-	providedResources := map[string]*v1alpha1.PipelineResource{"git-resource": r}
-	pr := v1alpha1.PipelineRun{
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{"git-resource": r}
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
 	}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return taskWithOptionalResourcesDeprecated, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return nil, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, nil }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) {
+		return taskWithOptionalResourcesDeprecated, nil
+	}
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return nil, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, nil }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return nil, nil }
 
 	pipelineState, err := ResolvePipelineRun(context.Background(), pr, getTask, getTaskRun, getClusterTask, getCondition, p.Spec.Tasks, providedResources)
@@ -1498,16 +1270,16 @@ func TestResolvedPipelineRun_PipelineTaskHasOptionalResources(t *testing.T) {
 		ResolvedTaskResources: &resources.ResolvedTaskResources{
 			TaskName: taskWithOptionalResources.Name,
 			TaskSpec: &taskWithOptionalResources.Spec,
-			Inputs: map[string]*v1alpha1.PipelineResource{
+			Inputs: map[string]*resourcev1alpha1.PipelineResource{
 				"required-input": r,
 			},
-			Outputs: map[string]*v1alpha1.PipelineResource{
+			Outputs: map[string]*resourcev1alpha1.PipelineResource{
 				"required-output": r,
 			},
 		},
 	}}
 
-	if d := cmp.Diff(expectedState, pipelineState, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{})); d != "" {
+	if d := cmp.Diff(expectedState, pipelineState, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{})); d != "" {
 		t.Errorf("Expected to get current pipeline state %v, but actual differed %s", expectedState, diff.PrintWantGot(d))
 	}
 }
@@ -1516,27 +1288,27 @@ func TestResolveConditionChecks(t *testing.T) {
 	names.TestingSeed()
 	ccName := "pipelinerun-mytask1-9l9zj-always-true-mz4c7"
 
-	cc := &v1alpha1.TaskRun{
+	cc := &v1beta1.TaskRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: ccName,
 		},
 	}
 
-	ptc := v1alpha1.PipelineTaskCondition{
+	ptc := v1beta1.PipelineTaskCondition{
 		ConditionRef: "always-true",
 	}
 
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:       "mytask1",
-		TaskRef:    &v1alpha1.TaskRef{Name: "task"},
-		Conditions: []v1alpha1.PipelineTaskCondition{ptc},
+		TaskRef:    &v1beta1.TaskRef{Name: "task"},
+		Conditions: []v1beta1.PipelineTaskCondition{ptc},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return &condition, nil }
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1549,7 +1321,7 @@ func TestResolveConditionChecks(t *testing.T) {
 	}{
 		{
 			name: "conditionCheck exists",
-			getTaskRun: func(name string) (*v1alpha1.TaskRun, error) {
+			getTaskRun: func(name string) (*v1beta1.TaskRun, error) {
 				switch name {
 				case "pipelinerun-mytask1-9l9zj-always-true-0-mz4c7":
 					return cc, nil
@@ -1563,14 +1335,14 @@ func TestResolveConditionChecks(t *testing.T) {
 				ConditionRegisterName: "always-true-0",
 				ConditionCheckName:    "pipelinerun-mytask1-9l9zj-always-true-0-mz4c7",
 				Condition:             &condition,
-				ConditionCheck:        v1alpha1.NewConditionCheck(cc),
+				ConditionCheck:        v1beta1.NewConditionCheck(cc),
 				PipelineTaskCondition: &ptc,
 				ResolvedResources:     providedResources,
 			}},
 		},
 		{
 			name: "conditionCheck doesn't exist",
-			getTaskRun: func(name string) (*v1alpha1.TaskRun, error) {
+			getTaskRun: func(name string) (*v1beta1.TaskRun, error) {
 				if name == "pipelinerun-mytask1-mssqb-always-true-0-78c5n" {
 					return nil, nil
 				} else if name == "pipelinerun-mytask1-mssqb" {
@@ -1595,7 +1367,7 @@ func TestResolveConditionChecks(t *testing.T) {
 				t.Fatalf("Did not expect error when resolving PipelineRun without Conditions: %v", err)
 			}
 
-			if d := cmp.Diff(tc.expectedConditionCheck, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
+			if d := cmp.Diff(tc.expectedConditionCheck, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
 				t.Fatalf("ConditionChecks did not resolve as expected for case %s %s", tc.name, diff.PrintWantGot(d))
 			}
 		})
@@ -1607,39 +1379,47 @@ func TestResolveConditionChecks_MultipleConditions(t *testing.T) {
 	ccName1 := "pipelinerun-mytask1-9l9zj-always-true-mz4c7"
 	ccName2 := "pipelinerun-mytask1-9l9zj-always-true-mssqb"
 
-	cc1 := &v1alpha1.TaskRun{
+	cc1 := &v1beta1.TaskRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: ccName1,
 		},
 	}
 
-	cc2 := &v1alpha1.TaskRun{
+	cc2 := &v1beta1.TaskRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: ccName2,
 		},
 	}
 
-	ptc1 := v1alpha1.PipelineTaskCondition{
+	ptc1 := v1beta1.PipelineTaskCondition{
 		ConditionRef: "always-true",
-		Params:       []v1alpha1.Param{{Name: "path", Value: *tb.ArrayOrString("$(params.path)")}, {Name: "image", Value: *tb.ArrayOrString("$(params.image)")}},
+		Params: []v1beta1.Param{{
+			Name: "path", Value: *v1beta1.NewArrayOrString("$(params.path)"),
+		}, {
+			Name: "image", Value: *v1beta1.NewArrayOrString("$(params.image)"),
+		}},
 	}
 
-	ptc2 := v1alpha1.PipelineTaskCondition{
+	ptc2 := v1beta1.PipelineTaskCondition{
 		ConditionRef: "always-true",
-		Params:       []v1alpha1.Param{{Name: "path", Value: *tb.ArrayOrString("$(params.path-test)")}, {Name: "image", Value: *tb.ArrayOrString("$(params.image-test)")}},
+		Params: []v1beta1.Param{{
+			Name: "path", Value: *v1beta1.NewArrayOrString("$(params.path-test)"),
+		}, {
+			Name: "image", Value: *v1beta1.NewArrayOrString("$(params.image-test)"),
+		}},
 	}
 
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:       "mytask1",
-		TaskRef:    &v1alpha1.TaskRef{Name: "task"},
-		Conditions: []v1alpha1.PipelineTaskCondition{ptc1, ptc2},
+		TaskRef:    &v1beta1.TaskRef{Name: "task"},
+		Conditions: []v1beta1.PipelineTaskCondition{ptc1, ptc2},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return &condition, nil }
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1652,7 +1432,7 @@ func TestResolveConditionChecks_MultipleConditions(t *testing.T) {
 	}{
 		{
 			name: "conditionCheck exists",
-			getTaskRun: func(name string) (*v1alpha1.TaskRun, error) {
+			getTaskRun: func(name string) (*v1beta1.TaskRun, error) {
 				switch name {
 				case "pipelinerun-mytask1-9l9zj-always-true-0-mz4c7":
 					return cc1, nil
@@ -1667,14 +1447,14 @@ func TestResolveConditionChecks_MultipleConditions(t *testing.T) {
 				ConditionRegisterName: "always-true-0",
 				ConditionCheckName:    "pipelinerun-mytask1-9l9zj-always-true-0-mz4c7",
 				Condition:             &condition,
-				ConditionCheck:        v1alpha1.NewConditionCheck(cc1),
+				ConditionCheck:        v1beta1.NewConditionCheck(cc1),
 				PipelineTaskCondition: &ptc1,
 				ResolvedResources:     providedResources,
 			}, {
 				ConditionRegisterName: "always-true-1",
 				ConditionCheckName:    "pipelinerun-mytask1-9l9zj-always-true-1-mssqb",
 				Condition:             &condition,
-				ConditionCheck:        v1alpha1.NewConditionCheck(cc2),
+				ConditionCheck:        v1beta1.NewConditionCheck(cc2),
 				PipelineTaskCondition: &ptc2,
 				ResolvedResources:     providedResources,
 			}},
@@ -1688,7 +1468,7 @@ func TestResolveConditionChecks_MultipleConditions(t *testing.T) {
 				t.Fatalf("Did not expect error when resolving PipelineRun without Conditions: %v", err)
 			}
 
-			if d := cmp.Diff(tc.expectedConditionCheck, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
+			if d := cmp.Diff(tc.expectedConditionCheck, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
 				t.Fatalf("ConditionChecks did not resolve as expected for case %s %s", tc.name, diff.PrintWantGot(d))
 			}
 		})
@@ -1699,17 +1479,17 @@ func TestResolveConditionChecks_ConditionDoesNotExist(t *testing.T) {
 	trName := "pipelinerun-mytask1-9l9zj"
 	ccName := "pipelinerun-mytask1-9l9zj-does-not-exist-mz4c7"
 
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:    "mytask1",
-		TaskRef: &v1alpha1.TaskRef{Name: "task"},
-		Conditions: []v1alpha1.PipelineTaskCondition{{
+		TaskRef: &v1beta1.TaskRef{Name: "task"},
+		Conditions: []v1beta1.PipelineTaskCondition{{
 			ConditionRef: "does-not-exist",
 		}},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) {
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) {
 		if name == ccName {
 			return nil, fmt.Errorf("should not be called")
 		} else if name == trName {
@@ -1717,11 +1497,11 @@ func TestResolveConditionChecks_ConditionDoesNotExist(t *testing.T) {
 		}
 		return nil, fmt.Errorf("getTaskRun called with unexpected name %s", name)
 	}
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
 	getCondition := func(name string) (*v1alpha1.Condition, error) {
-		return nil, kerrors.NewNotFound(v1alpha1.Resource("condition"), name)
+		return nil, kerrors.NewNotFound(v1beta1.Resource("condition"), name)
 	}
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1745,26 +1525,26 @@ func TestResolveConditionCheck_UseExistingConditionCheckName(t *testing.T) {
 	trName := "pipelinerun-mytask1-9l9zj"
 	ccName := "some-random-name"
 
-	cc := &v1alpha1.TaskRun{
+	cc := &v1beta1.TaskRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: ccName,
 		},
-		Spec: v1alpha1.TaskRunSpec{},
+		Spec: v1beta1.TaskRunSpec{},
 	}
 
-	ptc := v1alpha1.PipelineTaskCondition{
+	ptc := v1beta1.PipelineTaskCondition{
 		ConditionRef: "always-true",
 	}
 
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:       "mytask1",
-		TaskRef:    &v1alpha1.TaskRef{Name: "task"},
-		Conditions: []v1alpha1.PipelineTaskCondition{ptc},
+		TaskRef:    &v1beta1.TaskRef{Name: "task"},
+		Conditions: []v1beta1.PipelineTaskCondition{ptc},
 	}}
-	providedResources := map[string]*v1alpha1.PipelineResource{}
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) {
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) {
 		if name == ccName {
 			return cc, nil
 		} else if name == trName {
@@ -1772,25 +1552,25 @@ func TestResolveConditionCheck_UseExistingConditionCheckName(t *testing.T) {
 		}
 		return nil, fmt.Errorf("getTaskRun called with unexpected name %s", name)
 	}
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
 	getCondition := func(name string) (*v1alpha1.Condition, error) { return &condition, nil }
 
-	ccStatus := make(map[string]*v1alpha1.PipelineRunConditionCheckStatus)
-	ccStatus[ccName] = &v1alpha1.PipelineRunConditionCheckStatus{
+	ccStatus := make(map[string]*v1beta1.PipelineRunConditionCheckStatus)
+	ccStatus[ccName] = &v1beta1.PipelineRunConditionCheckStatus{
 		ConditionName: "always-true-0",
 	}
-	trStatus := make(map[string]*v1alpha1.PipelineRunTaskRunStatus)
-	trStatus[trName] = &v1alpha1.PipelineRunTaskRunStatus{
+	trStatus := make(map[string]*v1beta1.PipelineRunTaskRunStatus)
+	trStatus[trName] = &v1beta1.PipelineRunTaskRunStatus{
 		PipelineTaskName: "mytask-1",
 		ConditionChecks:  ccStatus,
 	}
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
-		Status: v1alpha1.PipelineRunStatus{
+		Status: v1beta1.PipelineRunStatus{
 			Status: duckv1beta1.Status{},
-			PipelineRunStatusFields: v1alpha1.PipelineRunStatusFields{
+			PipelineRunStatusFields: v1beta1.PipelineRunStatusFields{
 				TaskRuns: trStatus,
 			},
 		},
@@ -1804,12 +1584,12 @@ func TestResolveConditionCheck_UseExistingConditionCheckName(t *testing.T) {
 		ConditionRegisterName: "always-true-0",
 		ConditionCheckName:    ccName,
 		Condition:             &condition,
-		ConditionCheck:        v1alpha1.NewConditionCheck(cc),
+		ConditionCheck:        v1beta1.NewConditionCheck(cc),
 		PipelineTaskCondition: &ptc,
 		ResolvedResources:     providedResources,
 	}}
 
-	if d := cmp.Diff(expectedConditionChecks, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
+	if d := cmp.Diff(expectedConditionChecks, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
 		t.Fatalf("ConditionChecks did not resolve as expected %s", diff.PrintWantGot(d))
 	}
 }
@@ -1817,30 +1597,30 @@ func TestResolveConditionCheck_UseExistingConditionCheckName(t *testing.T) {
 func TestResolvedConditionCheck_WithResources(t *testing.T) {
 	names.TestingSeed()
 
-	condition := tb.Condition("always-true", tb.ConditionSpec(
-		tb.ConditionResource("workspace", v1alpha1.PipelineResourceTypeGit),
+	condition := tbv1alpha1.Condition("always-true", tbv1alpha1.ConditionSpec(
+		tbv1alpha1.ConditionResource("workspace", resourcev1alpha1.PipelineResourceTypeGit),
 	))
 
 	gitResource := tb.PipelineResource("some-repo", tb.PipelineResourceNamespace("foo"), tb.PipelineResourceSpec(
-		v1alpha1.PipelineResourceTypeGit))
+		resourcev1alpha1.PipelineResourceTypeGit))
 
-	ptc := v1alpha1.PipelineTaskCondition{
+	ptc := v1beta1.PipelineTaskCondition{
 		ConditionRef: "always-true",
-		Resources: []v1alpha1.PipelineTaskInputResource{{
+		Resources: []v1beta1.PipelineTaskInputResource{{
 			Name:     "workspace",
 			Resource: "blah", // The name used in the pipeline
 		}},
 	}
 
-	pts := []v1alpha1.PipelineTask{{
+	pts := []v1beta1.PipelineTask{{
 		Name:       "mytask1",
-		TaskRef:    &v1alpha1.TaskRef{Name: "task"},
-		Conditions: []v1alpha1.PipelineTaskCondition{ptc},
+		TaskRef:    &v1beta1.TaskRef{Name: "task"},
+		Conditions: []v1beta1.PipelineTaskCondition{ptc},
 	}}
 
-	getTask := func(name string) (v1alpha1.TaskInterface, error) { return task, nil }
-	getTaskRun := func(name string) (*v1alpha1.TaskRun, error) { return nil, nil }
-	getClusterTask := func(name string) (v1alpha1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) { return nil, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
 
 	// This err result is required to satisfy the type alias on this function, but it triggers
 	// a false positive in the linter: https://github.com/mvdan/unparam/issues/40
@@ -1849,7 +1629,7 @@ func TestResolvedConditionCheck_WithResources(t *testing.T) {
 		return condition, nil
 	}
 
-	pr := v1alpha1.PipelineRun{
+	pr := v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "pipelinerun",
 		},
@@ -1857,16 +1637,16 @@ func TestResolvedConditionCheck_WithResources(t *testing.T) {
 
 	tcs := []struct {
 		name              string
-		providedResources map[string]*v1alpha1.PipelineResource
+		providedResources map[string]*resourcev1alpha1.PipelineResource
 		wantErr           bool
-		expected          map[string]*v1alpha1.PipelineResource
+		expected          map[string]*resourcev1alpha1.PipelineResource
 	}{{
 		name:              "resource exists",
-		providedResources: map[string]*v1alpha1.PipelineResource{"blah": gitResource},
-		expected:          map[string]*v1alpha1.PipelineResource{"workspace": gitResource},
+		providedResources: map[string]*resourcev1alpha1.PipelineResource{"blah": gitResource},
+		expected:          map[string]*resourcev1alpha1.PipelineResource{"workspace": gitResource},
 	}, {
 		name:              "resource does not exist",
-		providedResources: map[string]*v1alpha1.PipelineResource{},
+		providedResources: map[string]*resourcev1alpha1.PipelineResource{},
 		wantErr:           true,
 	}}
 
@@ -1889,7 +1669,7 @@ func TestResolvedConditionCheck_WithResources(t *testing.T) {
 					PipelineTaskCondition: &ptc,
 					ResolvedResources:     tc.expected,
 				}}
-				if d := cmp.Diff(expectedConditionChecks, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1alpha1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
+				if d := cmp.Diff(expectedConditionChecks, pipelineState[0].ResolvedConditionChecks, cmpopts.IgnoreUnexported(v1beta1.TaskRunSpec{}, ResolvedConditionCheck{})); d != "" {
 					t.Fatalf("ConditionChecks did not resolve as expected %s", diff.PrintWantGot(d))
 				}
 			}
@@ -1938,15 +1718,73 @@ func TestGetResourcesFromBindings_Extra(t *testing.T) {
 	}
 }
 
-func TestValidateWorkspaceBindings(t *testing.T) {
-	p := tb.Pipeline("pipelines", tb.PipelineSpec(
-		tb.PipelineWorkspaceDeclaration("foo"),
-	))
-	pr := tb.PipelineRun("pipelinerun", tb.PipelineRunSpec("pipeline",
-		tb.PipelineRunWorkspaceBindingEmptyDir("bar"),
-	))
-	if err := ValidateWorkspaceBindings(&p.Spec, pr); err == nil {
-		t.Fatalf("Expected error indicating `foo` workspace was not provided but got no error")
+func TestValidateWorkspaceBindingsWithValidWorkspaces(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec *v1beta1.PipelineSpec
+		run  *v1beta1.PipelineRun
+		err  string
+	}{{
+		name: "include required workspace",
+		spec: &v1beta1.PipelineSpec{
+			Workspaces: []v1beta1.PipelineWorkspaceDeclaration{{
+				Name: "foo",
+			}},
+		},
+		run: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{{
+					Name:     "foo",
+					EmptyDir: &corev1.EmptyDirVolumeSource{},
+				}},
+			},
+		},
+	}, {
+		name: "omit optional workspace",
+		spec: &v1beta1.PipelineSpec{
+			Workspaces: []v1beta1.PipelineWorkspaceDeclaration{{
+				Name:     "foo",
+				Optional: true,
+			}},
+		},
+		run: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{},
+			},
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateWorkspaceBindings(tc.spec, tc.run); err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateWorkspaceBindingsWithInvalidWorkspaces(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		spec *v1beta1.PipelineSpec
+		run  *v1beta1.PipelineRun
+		err  string
+	}{{
+		name: "missing required workspace",
+		spec: &v1beta1.PipelineSpec{
+			Workspaces: []v1beta1.PipelineWorkspaceDeclaration{{
+				Name: "foo",
+			}},
+		},
+		run: &v1beta1.PipelineRun{
+			Spec: v1beta1.PipelineRunSpec{
+				Workspaces: []v1beta1.WorkspaceBinding{},
+			},
+		},
+	}} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateWorkspaceBindings(tc.spec, tc.run); err == nil {
+				t.Fatalf("Expected error indicating `foo` workspace was not provided but got no error")
+			}
+		})
 	}
 }
 
@@ -1963,14 +1801,53 @@ func TestValidateServiceaccountMapping(t *testing.T) {
 	}
 }
 
-func TestIsBeforeFirstTaskRun_WithNotStartedTask(t *testing.T) {
-	if !noneStartedState.IsBeforeFirstTaskRun() {
-		t.Fatalf("Expected state to be before first taskrun")
-	}
-}
+func TestResolvePipeline_WhenExpressions(t *testing.T) {
+	names.TestingSeed()
+	tName1 := "pipelinerun-mytask1-9l9zj-always-true-mz4c7"
 
-func TestIsBeforeFirstTaskRun_WithStartedTask(t *testing.T) {
-	if oneStartedState.IsBeforeFirstTaskRun() {
-		t.Fatalf("Expected state to be after first taskrun")
+	t1 := &v1beta1.TaskRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: tName1,
+		},
 	}
+
+	ptwe1 := v1beta1.WhenExpression{
+		Input:    "foo",
+		Operator: selection.In,
+		Values:   []string{"foo"},
+	}
+
+	pts := []v1beta1.PipelineTask{{
+		Name:            "mytask1",
+		TaskRef:         &v1beta1.TaskRef{Name: "task"},
+		WhenExpressions: []v1beta1.WhenExpression{ptwe1},
+	}}
+
+	providedResources := map[string]*resourcev1alpha1.PipelineResource{}
+
+	getTask := func(ctx context.Context, name string) (v1beta1.TaskInterface, error) { return task, nil }
+	getClusterTask := func(name string) (v1beta1.TaskInterface, error) { return nil, errors.New("should not get called") }
+	getCondition := func(name string) (*v1alpha1.Condition, error) { return &condition, nil }
+	pr := v1beta1.PipelineRun{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "pipelinerun",
+		},
+	}
+
+	getTaskRun := func(name string) (*v1beta1.TaskRun, error) {
+		switch name {
+		case "pipelinerun-mytask1-9l9zj-always-true-0-mz4c7":
+			return t1, nil
+		case "pipelinerun-mytask1-9l9zj":
+			return &trs[0], nil
+		}
+		return nil, fmt.Errorf("getTaskRun called with unexpected name %s", name)
+	}
+
+	t.Run("When Expressions exist", func(t *testing.T) {
+		_, err := ResolvePipelineRun(context.Background(), pr, getTask, getTaskRun, getClusterTask, getCondition, pts, providedResources)
+		if err != nil {
+			t.Fatalf("Did not expect error when resolving PipelineRun: %v", err)
+		}
+	})
 }

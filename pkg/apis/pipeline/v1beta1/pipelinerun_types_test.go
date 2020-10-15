@@ -17,12 +17,10 @@ limitations under the License.
 package v1beta1_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	tb "github.com/tektoncd/pipeline/internal/builder/v1alpha1"
 	"github.com/tektoncd/pipeline/pkg/apis/pipeline/v1beta1"
 	"github.com/tektoncd/pipeline/test/diff"
 	corev1 "k8s.io/api/core/v1"
@@ -83,7 +81,7 @@ func TestPipelineRun_TaskRunref(t *testing.T) {
 	}
 }
 
-func TestInitializeConditions(t *testing.T) {
+func TestInitializePipelineRunConditions(t *testing.T) {
 	p := &v1beta1.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "test-name",
@@ -100,11 +98,28 @@ func TestInitializeConditions(t *testing.T) {
 		t.Fatalf("PipelineRun StartTime not initialized correctly")
 	}
 
+	condition := p.Status.GetCondition(apis.ConditionSucceeded)
+	if condition.Reason != v1beta1.PipelineRunReasonStarted.String() {
+		t.Fatalf("PipelineRun initialize reason should be %s, got %s instead", v1beta1.PipelineRunReasonStarted.String(), condition.Reason)
+	}
 	p.Status.TaskRuns["fooTask"] = &v1beta1.PipelineRunTaskRunStatus{}
+
+	// Change the reason before we initialize again
+	p.Status.SetCondition(&apis.Condition{
+		Type:    apis.ConditionSucceeded,
+		Status:  corev1.ConditionUnknown,
+		Reason:  "not just started",
+		Message: "hello",
+	})
 
 	p.Status.InitializeConditions()
 	if len(p.Status.TaskRuns) != 1 {
 		t.Fatalf("PipelineRun status getting reset")
+	}
+
+	newCondition := p.Status.GetCondition(apis.ConditionSucceeded)
+	if newCondition.Reason != "not just started" {
+		t.Fatalf("PipelineRun initialize reset the condition reason to %s", newCondition.Reason)
 	}
 }
 
@@ -150,11 +165,12 @@ func TestPipelineRunHasVolumeClaimTemplate(t *testing.T) {
 	}
 }
 
-func TestPipelineRunKey(t *testing.T) {
-	pr := tb.PipelineRun("prunname")
-	expectedKey := fmt.Sprintf("PipelineRun/%p", pr)
-	if pr.GetRunKey() != expectedKey {
-		t.Fatalf("Expected taskrun key to be %s but got %s", expectedKey, pr.GetRunKey())
+func TestGetNamespacedName(t *testing.T) {
+	pr := &v1beta1.PipelineRun{ObjectMeta: metav1.ObjectMeta{Namespace: "foo", Name: "prunname"}}
+	n := pr.GetNamespacedName()
+	expected := "foo/prunname"
+	if n.String() != expected {
+		t.Fatalf("Expected name to be %s but got %s", expected, n.String())
 	}
 }
 

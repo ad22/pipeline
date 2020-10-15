@@ -17,7 +17,6 @@ limitations under the License.
 package v1beta1
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/tektoncd/pipeline/pkg/apis/config"
@@ -25,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"knative.dev/pkg/apis"
 	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
 )
@@ -38,6 +38,7 @@ var (
 )
 
 // +genclient
+// +genreconciler:krshapedlogic=false
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
 // PipelineRun represents a single execution of a Pipeline. PipelineRuns are how
@@ -72,6 +73,11 @@ func (pr *PipelineRun) GetTaskRunRef() corev1.ObjectReference {
 	}
 }
 
+// GetStatusCondition returns the task run status as a ConditionAccessor
+func (pr *PipelineRun) GetStatusCondition() apis.ConditionAccessor {
+	return &pr.Status
+}
+
 // GetOwnerReference gets the pipeline run as owner reference for any related objects
 func (pr *PipelineRun) GetOwnerReference() metav1.OwnerReference {
 	return *metav1.NewControllerRef(pr, groupVersionKind)
@@ -92,14 +98,18 @@ func (pr *PipelineRun) IsCancelled() bool {
 	return pr.Spec.Status == PipelineRunSpecStatusCancelled
 }
 
-// GetRunKey return the pipelinerun key for timeout handler map
-func (pr *PipelineRun) GetRunKey() string {
-	// The address of the pointer is a threadsafe unique identifier for the pipelinerun
-	return fmt.Sprintf("%s/%p", pipeline.PipelineRunControllerName, pr)
+// GetNamespacedName returns a k8s namespaced name that identifies this PipelineRun
+func (pr *PipelineRun) GetNamespacedName() types.NamespacedName {
+	return types.NamespacedName{Namespace: pr.Namespace, Name: pr.Name}
 }
 
 // IsTimedOut returns true if a pipelinerun has exceeded its spec.Timeout based on its status.Timeout
 func (pr *PipelineRun) IsTimedOut() bool {
+	return pr.HasTimedOut()
+}
+
+// HasTimedOut returns true if a pipelinerun has exceeded its spec.Timeout based on its status.Timeout
+func (pr *PipelineRun) HasTimedOut() bool {
 	pipelineTimeout := pr.Spec.Timeout
 	startTime := pr.Status.StartTime
 
@@ -153,6 +163,8 @@ type PipelineRunSpec struct {
 	Params []Param `json:"params,omitempty"`
 	// +optional
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// Deprecated: use taskRunSpecs.ServiceAccountName instead
 	// +optional
 	ServiceAccountNames []PipelineRunSpecServiceAccountName `json:"serviceAccountNames,omitempty"`
 	// Used for cancelling a pipelinerun (and maybe more later on)
@@ -200,6 +212,35 @@ type PipelineRunStatus struct {
 	PipelineRunStatusFields `json:",inline"`
 }
 
+// PipelineRunReason represents a reason for the pipeline run "Succeeded" condition
+type PipelineRunReason string
+
+const (
+	// PipelineRunReasonStarted is the reason set when the PipelineRun has just started
+	PipelineRunReasonStarted PipelineRunReason = "Started"
+	// PipelineRunReasonRunning is the reason set when the PipelineRun is running
+	PipelineRunReasonRunning PipelineRunReason = "Running"
+	// PipelineRunReasonSuccessful is the reason set when the PipelineRun completed successfully
+	PipelineRunReasonSuccessful PipelineRunReason = "Succeeded"
+	// PipelineRunReasonCompleted is the reason set when the PipelineRun completed successfully with one or more skipped Tasks
+	PipelineRunReasonCompleted PipelineRunReason = "Completed"
+	// PipelineRunReasonFailed is the reason set when the PipelineRun completed with a failure
+	PipelineRunReasonFailed PipelineRunReason = "Failed"
+	// PipelineRunReasonCancelled is the reason set when the PipelineRun cancelled by the user
+	// This reason may be found with a corev1.ConditionFalse status, if the cancellation was processed successfully
+	// This reason may be found with a corev1.ConditionUnknown status, if the cancellation is being processed or failed
+	PipelineRunReasonCancelled PipelineRunReason = "Cancelled"
+	// PipelineRunReasonTimedOut is the reason set when the PipelineRun has timed out
+	PipelineRunReasonTimedOut PipelineRunReason = "PipelineRunTimeout"
+	// PipelineRunReasonStopping indicates that no new Tasks will be scheduled by the controller, and the
+	// pipeline will stop once all running tasks complete their work
+	PipelineRunReasonStopping PipelineRunReason = "PipelineRunStopping"
+)
+
+func (t PipelineRunReason) String() string {
+	return string(t)
+}
+
 var pipelineRunCondSet = apis.NewBatchConditionSet()
 
 // GetCondition returns the Condition matching the given type.
@@ -210,13 +251,22 @@ func (pr *PipelineRunStatus) GetCondition(t apis.ConditionType) *apis.Condition 
 // InitializeConditions will set all conditions in pipelineRunCondSet to unknown for the PipelineRun
 // and set the started time to the current time
 func (pr *PipelineRunStatus) InitializeConditions() {
+	started := false
 	if pr.TaskRuns == nil {
 		pr.TaskRuns = make(map[string]*PipelineRunTaskRunStatus)
 	}
 	if pr.StartTime.IsZero() {
 		pr.StartTime = &metav1.Time{Time: time.Now()}
+		started = true
 	}
-	pipelineRunCondSet.Manage(pr).InitializeConditions()
+	conditionManager := pipelineRunCondSet.Manage(pr)
+	conditionManager.InitializeConditions()
+	// Ensure the started reason is set for the "Succeeded" condition
+	if started {
+		initialCondition := conditionManager.GetCondition(apis.ConditionSucceeded)
+		initialCondition.Reason = PipelineRunReasonStarted.String()
+		conditionManager.SetCondition(*initialCondition)
+	}
 }
 
 // SetCondition sets the condition, unsetting previous conditions with the same
@@ -225,6 +275,25 @@ func (pr *PipelineRunStatus) SetCondition(newCond *apis.Condition) {
 	if newCond != nil {
 		pipelineRunCondSet.Manage(pr).SetCondition(*newCond)
 	}
+}
+
+// MarkSucceeded changes the Succeeded condition to True with the provided reason and message.
+func (pr *PipelineRunStatus) MarkSucceeded(reason, messageFormat string, messageA ...interface{}) {
+	pipelineRunCondSet.Manage(pr).MarkTrueWithReason(apis.ConditionSucceeded, reason, messageFormat, messageA...)
+	succeeded := pr.GetCondition(apis.ConditionSucceeded)
+	pr.CompletionTime = &succeeded.LastTransitionTime.Inner
+}
+
+// MarkFailed changes the Succeeded condition to False with the provided reason and message.
+func (pr *PipelineRunStatus) MarkFailed(reason, messageFormat string, messageA ...interface{}) {
+	pipelineRunCondSet.Manage(pr).MarkFalse(apis.ConditionSucceeded, reason, messageFormat, messageA...)
+	succeeded := pr.GetCondition(apis.ConditionSucceeded)
+	pr.CompletionTime = &succeeded.LastTransitionTime.Inner
+}
+
+// MarkRunning changes the Succeeded condition to Unknown with the provided reason and message.
+func (pr *PipelineRunStatus) MarkRunning(reason, messageFormat string, messageA ...interface{}) {
+	pipelineRunCondSet.Manage(pr).MarkUnknown(apis.ConditionSucceeded, reason, messageFormat, messageA...)
 }
 
 // MarkResourceNotConvertible adds a Warning-severity condition to the resource noting
@@ -261,6 +330,21 @@ type PipelineRunStatusFields struct {
 
 	// PipelineRunSpec contains the exact spec used to instantiate the run
 	PipelineSpec *PipelineSpec `json:"pipelineSpec,omitempty"`
+
+	// list of tasks that were skipped due to when expressions evaluating to false
+	// +optional
+	SkippedTasks []SkippedTask `json:"skippedTasks,omitempty"`
+}
+
+// SkippedTask is used to describe the Tasks that were skipped due to their When Expressions
+// evaluating to False. This is a struct because we are looking into including more details
+// about the When Expressions that caused this Task to be skipped.
+type SkippedTask struct {
+	// Name is the Pipeline Task name
+	Name string `json:"name"`
+	// WhenExpressions is the list of checks guarding the execution of the PipelineTask
+	// +optional
+	WhenExpressions []WhenExpression `json:"whenExpressions,omitempty"`
 }
 
 // PipelineRunResult used to describe the results of a pipeline
@@ -282,6 +366,9 @@ type PipelineRunTaskRunStatus struct {
 	// ConditionChecks maps the name of a condition check to its Status
 	// +optional
 	ConditionChecks map[string]*PipelineRunConditionCheckStatus `json:"conditionChecks,omitempty"`
+	// WhenExpressions is the list of checks guarding the execution of the PipelineTask
+	// +optional
+	WhenExpressions []WhenExpression `json:"whenExpressions,omitempty"`
 }
 
 // PipelineRunConditionCheckStatus returns the condition check status

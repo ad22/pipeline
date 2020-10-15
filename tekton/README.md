@@ -4,150 +4,45 @@ _Why does Tekton pipelines have a folder called `tekton`? Cuz we think it would 
 if the `tekton` folder were the place to look for CI/CD logic in most repos!_
 
 We dogfood our project by using Tekton Pipelines to build, test and release
-Tekton Pipelines!
-
-This directory contains the
+Tekton Pipelines! This directory contains the
 [`Tasks`](https://github.com/tektoncd/pipeline/blob/master/docs/tasks.md) and
 [`Pipelines`](https://github.com/tektoncd/pipeline/blob/master/docs/pipelines.md)
 that we use.
 
-The Pipelines and Tasks in this folder are used for:
-
-1. [Manually creating official releases from the official cluster](#create-an-official-release)
-1. [Automated nightly releases](#nightly-releases)
-
-To start from scratch and use these Pipelines and Tasks:
-
-1. [Install Tekton](#install-tekton)
-1. [Setup the Tasks and Pipelines](#setup)
-1. [Create the required service account + secrets](#service-account-and-secrets)
+* [How to create a release](#create-an-official-release)
+* [How to create a patch release](#create-a-patch-release)
+* [Automated nightly releases](#nightly-releases)
+* [Setup releases](#setup)
 
 ## Create an official release
 
-Official releases are performed from the `dogfooding` cluster
-[in the `tekton-releases` GCP project](https://github.com/tektoncd/plumbing/blob/master/gcp.md).
-This cluster [already has the correct version of Tekton installed](#install-tekton).
+To create an official release, follow the steps in the [release-cheat-sheet](./release-cheat-sheet.md).
 
-To make a new release:
+## Create a patch release
 
-1. (Optionally) [Apply the latest versions of the Tasks + Pipelines](#setup)
-1. (If you haven't already) [Install `tkn`](https://github.com/tektoncd/cli#installing-tkn)
-1. [Run the Pipeline](#run-the-pipeline)
-1. Create the new tag and release in GitHub
-   ([see one of way of doing that here](https://github.com/tektoncd/plumbing/tree/master/tekton/resources/release#create-draft-release)).
-1. Add an entry to [the README](../README.md) at `HEAD` for docs and examples for
-   the new release ([README.md#read-the-docs](../README.md#read-the-docs)).
-1. Update the new release in GitHub with the same links to the docs and examples, see
-   [v0.1.0](https://github.com/tektoncd/pipeline/releases/tag/v0.1.0) for example.
+Sometimes we'll find bugs that we want to backport fixes for into previous releases
+or discover things that were missing from a release that are required by upstream
+consumers of a project. In that case we'll make a patch release. To make one:
 
-### Run the Pipeline
-
-To use [`tkn`](https://github.com/tektoncd/cli) to run the `publish-tekton-pipelines` `Task` and create a release:
-
-1. Pick the revision you want to release and update the
-   [`resources.yaml`](./resources.yaml) file to add a
-   `PipelineResoruce` for it, e.g.:
-
-   ```yaml
-   apiVersion: tekton.dev/v1alpha1
-   kind: PipelineResource
-   metadata:
-     name: tekton-pipelines-vX-Y-Z
-   spec:
-     type: git
-     params:
-     - name: url
-       value: https://github.com/tektoncd/pipeline
-     - name: revision
-       value: revision-for-vX.Y.Z-invalid-tags-boouuhhh # REPLACE with the commit you'd like to build from (not a tag, since that's not created yet)
-   ```
-
- 1. Post-processing services perform post release automated tasks. Today the only
-    service available collects the `PipelineRun` logs uploads them to the release
-    bucker. To use release post-processing services, update the
-    [`resources.yaml`](./resources.yaml) file to add a valid targetURL in the
-    cloud event `PipelineResource` named `post-release-trigger`:
-
-    ```yaml
-    apiVersion: tekton.dev/v1alpha1
-    kind: PipelineResource
-    metadata:
-      name: post-release-trigger
-    spec:
-      type: cloudEvent
-      params:
-        - name: targetURI
-          value: http://el-pipeline-release-post-processing.default.svc.cluster.local:8080 # This has to be changed to a valid URL
-    ```
-
-    The targetURL should point to the event listener configured in the cluster.
-    The example above is configured with the correct value for the  `dogfooding`
-    cluster.
-
-1. To run against your own infrastructure (if you are running
-   [in the production cluster](https://github.com/tektoncd/plumbing#prow) the
-   default account should already have these creds, this is just a bonus - plus
-   `release-right-meow` might already exist in the cluster!), also setup the
-   required credentials for the `release-right-meow` service account, either:
-
-   - For
-     [the GCP service account `release-right-meow@tekton-releases.iam.gserviceaccount.com`](#production-service-account)
-     which has the proper authorization to release the images and yamls in
-     [our `tekton-releases` GCP project](https://github.com/tektoncd/plumbing#prow)
-   - For
-     [your own GCP service account](https://cloud.google.com/iam/docs/creating-managing-service-accounts)
-     if running against your own infrastructure
-
-
-1. [Connect to the production cluster](https://github.com/tektoncd/plumbing#prow):
-
-    ```bash
-    gcloud container clusters get-credentials dogfooding --zone us-central1-a --project tekton-releases
-    ```
-
-1. Run the `release-pipeline` (assuming you are using the production cluster and
-   [all the Tasks and Pipelines already exist](#setup)):
-
-   ```shell
-   # Create the resources - i.e. set the revision that you wan to build from
-   kubectl apply -f tekton/resources.yaml
-
-   # Change the environment variable to the version you would like to use.
-   # Be careful: due to #983 it is possible to overwrite previous releases.
-   export VERSION_TAG=vX.Y.Z
-   export GIT_RESOURCE_NAME=tekton-pipelines-git-vX-Y-Z
-   export IMAGE_REGISTRY=gcr.io/tekton-releases
-
-   # Double-check the git revision that is going to be used for the release:
-   kubectl get pipelineresource/tekton-pipelines-git-vX-Y-Z -o=jsonpath="{'Target Revision: '}{.spec.params[?(@.name == 'revision')].value}{'\n'}"
-
-   # Execute the release pipeline.
-   # By default this will tag the release as Pipelines' latest. If you would like to prevent
-   # this from happening add --param=releaseAsLatest="false"
-   tkn pipeline start \
-		--param=versionTag=${VERSION_TAG} \
-		--param=imageRegistry=${IMAGE_REGISTRY} \
-		--serviceaccount=release-right-meow \
-		--resource=source-repo=${GIT_RESOURCE_NAME} \
-		--resource=bucket=pipeline-tekton-bucket \
-		--resource=builtBaseImage=base-image \
-		--resource=builtEntrypointImage=entrypoint-image \
-		--resource=builtKubeconfigWriterImage=kubeconfigwriter-image \
-		--resource=builtCredsInitImage=creds-init-image \
-		--resource=builtGitInitImage=git-init-image \
-		--resource=builtControllerImage=controller-image \
-		--resource=builtWebhookImage=webhook-image \
-		--resource=builtDigestExporterImage=digest-exporter-image \
-		--resource=builtPullRequestInitImage=pull-request-init-image \
-		--resource=builtGcsFetcherImage=gcs-fetcher-image \
-		--resource=notification=post-release-trigger \
-		pipeline-release
-   ```
-
-_TODO(#569): Normally we'd use the image `PipelineResources` to control which
-image registry the images are pushed to. However since we have so many images,
-all going to the same registry, we are cheating and using a parameter for the
-image registry instead._
+1. Create a milestone to track issues and pull requests to include in the release,
+   e.g. [v0.12.1](https://github.com/tektoncd/pipeline/milestone/26)
+1. The issues when possible should first be fixed and merged into master. As they
+   are fixed, add the issues to the milestone and tag them with
+   [`needs-cherry-pick`](https://github.com/tektoncd/pipeline/pulls?q=label%3Aneeds-cherry-pick).
+1. Create a branch for the release named `release-<version number>x`, e.g. [`release-v0.13.0x`](https://github.com/tektoncd/pipeline/tree/release-v0.13.0x)
+   and push it to the repo https://github.com/tektoncd/pipeline (you may need help from
+   [an OWNER](../OWNER) with permission to push).
+1. Use [git cherry-pick](https://git-scm.com/docs/git-cherry-pick) to cherry pick the
+   fixes from master into the release branch you have created (use `-x` to include
+   the original commit information).
+1. Check that you have cherry picked all issues in the milestone and look for any
+   pull requests you may have missed with with
+   [`needs-cherry-pick`](https://github.com/tektoncd/pipeline/pulls?q=label%3Aneeds-cherry-pick).
+1. Remove [`needs-cherry-pick`](https://github.com/tektoncd/pipeline/pulls?q=label%3Aneeds-cherry-pick)
+   from all issues that have been cherry picked.
+1. [Create an official release](#create-an-official-release) for the patch, with the
+   [patch version incremented](https://semver.org/)
+1. Close the milestone.
 
 ## Nightly releases
 
@@ -158,7 +53,16 @@ This Pipeline uses:
 
 - [publish.yaml](publish.yaml)
 
-## Install Tekton
+## Setup
+
+To start from scratch and use these Pipelines and Tasks:
+
+1. [Install Tekton](#install-tekton)
+1. [Setup the Tasks and Pipelines](#install-tasks-and-pipelines)
+1. [Create the required service account + secrets](#service-account-and-secrets)
+1. [Setup post-processing](#setup-post-processing)
+
+### Install Tekton
 
 ```bash
 # If this is your first time installing Tekton in the cluster you might need to give yourself permission to do so
@@ -171,7 +75,7 @@ export TEKTON_VERSION=0.9.1
 kubectl apply --filename  https://storage.googleapis.com/tekton-releases/previous/v${TEKTON_VERSION}/release.yaml
 ```
 
-## Setup
+### Install tasks and pipelines
 
 Add all the `Tasks` to the cluster, including the
 [`golang`](https://github.com/tektoncd/catalog/tree/master/golang)
@@ -217,7 +121,7 @@ kubectl apply -f tekton/resources.yaml
   [`tektoncd/catalog`](https://github.com/tektoncd/catalog) and
   [`publish.yaml`](publish.yaml)'s `Task`.
 
-## Service account and secrets
+### Service account and secrets
 
 In order to release, these Pipelines use the `release-right-meow` service account,
 which uses `release-secret` and has
@@ -249,6 +153,30 @@ kubectl apply -f tekton/account.yaml
 kubectl patch serviceaccount $ACCOUNT \
   -p "{\"secrets\": [{\"name\": \"$GENERIC_SECRET\"}]}"
 ```
+
+### Setup post processing
+
+Post-processing services perform post release automated tasks. Today the only
+service available collects the `PipelineRun` logs uploads them to the release
+bucket. To use release post-processing services, the PipelineResource in
+[`resources.yaml`](./resources.yaml) must be configured with a valid targetURL in the
+cloud event `PipelineResource` named `post-release-trigger`:
+
+```yaml
+apiVersion: tekton.dev/v1alpha1
+kind: PipelineResource
+metadata:
+  name: post-release-trigger
+spec:
+  type: cloudEvent
+  params:
+    - name: targetURI
+      value: http://el-pipeline-release-post-processing.default.svc.cluster.local:8080 # This has to be changed to a valid URL
+```
+
+The targetURL should point to the event listener configured in the cluster.
+The example above is configured with the correct value for the  `dogfooding`
+cluster, using the event listener `pipeline-release-post-processing`.
 
 ## Supporting scripts and images
 

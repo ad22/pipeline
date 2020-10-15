@@ -26,6 +26,8 @@ const (
 	TaskRunResultType ResultType = "TaskRunResult"
 	// PipelineResourceResultType default pipeline result value
 	PipelineResourceResultType ResultType = "PipelineResourceResult"
+	// InternalTektonResultType default internal tekton result value
+	InternalTektonResultType ResultType = "InternalTektonResult"
 	// UnknownResultType default unknown result type value
 	UnknownResultType ResultType = ""
 )
@@ -123,10 +125,20 @@ type Step struct {
 	//
 	// If Script is not empty, the Step cannot have an Command or Args.
 	Script string `json:"script,omitempty"`
+	// Timeout is the time after which the step times out. Defaults to never.
+	// Refer to Go's ParseDuration documentation for expected format: https://golang.org/pkg/time/#ParseDuration
+	Timeout *metav1.Duration `json:"timeout,omitempty"`
 }
 
-// A sidecar has the same data structure as a Step, consisting of a Container, and optional Script.
-type Sidecar = Step
+// Sidecar has nearly the same data structure as Step, consisting of a Container and an optional Script, but does not have the ability to timeout.
+type Sidecar struct {
+	corev1.Container `json:",inline"`
+
+	// Script is the contents of an executable file to execute.
+	//
+	// If Script is not empty, the Step cannot have an Command or Args.
+	Script string `json:"script,omitempty"`
+}
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // TaskList contains a list of Task
